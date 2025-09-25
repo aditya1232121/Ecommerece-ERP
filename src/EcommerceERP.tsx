@@ -1,3 +1,4 @@
+// EcommerceERP.tsx
 import React, { useState, useEffect } from 'react';
 import { 
   Users, Package, DollarSign, TrendingUp, AlertTriangle, 
@@ -28,7 +29,60 @@ const initialData = {
   ]
 };
 
-// Authentication Component
+/* -------------------------
+   Helper role-checks & scoping
+   ------------------------- */
+const isAdmin = (user) => user?.role === 'admin';
+const isVendor = (user) => user?.role === 'vendor';
+const isCustomer = (user) => user?.role === 'customer';
+
+/**
+ * Returns a view of the data scoped by the current user's role:
+ * - admin: full data
+ * - vendor: only vendor's products & orders, but vendors won't see platform totalRevenue in UI
+ * - customer: only customer's orders
+ */
+const getScopedData = (user, data) => {
+  if (!user) return { ...data };
+
+  if (isAdmin(user)) {
+    return { ...data };
+  }
+
+  if (isVendor(user)) {
+    const vendorId = user.id; // in mock credentials vendor id is 2
+    const vendorProducts = data.products.filter(p => p.vendorId === vendorId);
+    const vendorOrders = data.orders.filter(o => o.vendorId === vendorId);
+    const vendorInfo = data.vendors.find(v => v.id === vendorId) ? [data.vendors.find(v => v.id === vendorId)] : [];
+    // keep user list but clients' data may be limited in UI
+    return {
+      ...data,
+      products: vendorProducts,
+      orders: vendorOrders,
+      vendors: vendorInfo
+    };
+  }
+
+  if (isCustomer(user)) {
+    const customerId = user.id;
+    const customerOrders = data.orders.filter(o => o.customerId === customerId);
+    // products shown are only those in customer's orders for reference (optional)
+    const productIds = new Set(customerOrders.map(o => o.productId));
+    const products = data.products.filter(p => productIds.has(p.id));
+    return {
+      ...data,
+      products,
+      orders: customerOrders
+    };
+  }
+
+  return { ...data };
+};
+
+/* -------------------------
+   Authentication Component
+   (unchanged except uses same demo credentials)
+   ------------------------- */
 const AuthenticationComponent = ({ onLogin }) => {
   const [isLogin, setIsLogin] = useState(true);
   const [formData, setFormData] = useState({
@@ -43,7 +97,6 @@ const AuthenticationComponent = ({ onLogin }) => {
   const handleInputChange = (e) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
-    // Clear error when user starts typing
     if (errors[name]) {
       setErrors(prev => ({ ...prev, [name]: '' }));
     }
@@ -270,98 +323,126 @@ const AuthenticationComponent = ({ onLogin }) => {
   );
 };
 
-// Dashboard Component
-const DashboardComponent = ({ data }) => {
+/* -------------------------
+   Dashboard Component
+   - Hides admin-only metrics for non-admins
+   ------------------------- */
+const DashboardComponent = ({ data, currentUser }) => {
+  // 📊 Metrics
   const totalRevenue = data.orders.reduce((sum, order) => sum + order.total, 0);
   const totalOrders = data.orders.length;
   const pendingOrders = data.orders.filter(order => order.status === 'pending').length;
+  const completedOrders = data.orders.filter(order => order.status === 'completed').length;
   const lowStockItems = data.products.filter(product => product.stock < 10).length;
-  const bestSellers = [...data.products].sort((a, b) => b.sold - a.sold).slice(0, 3);
 
+  const monthlyRevenue = data.orders
+    .filter(order => {
+      const orderDate = new Date(order.date);
+      const now = new Date();
+      return (
+        orderDate.getMonth() === now.getMonth() &&
+        orderDate.getFullYear() === now.getFullYear()
+      );
+    })
+    .reduce((sum, order) => sum + order.total, 0);
+
+  const avgOrderValue = totalOrders ? totalRevenue / totalOrders : 0;
+  const bestSellers = [...data.products]
+    .sort((a, b) => b.sold - a.sold)
+    .slice(0, 3);
+
+  const adminView = isAdmin(currentUser);
+
+  // 📑 Report Export
   const generateDashboardReport = (format) => {
-    const timestamp = new Date().toISOString().split('T')[0];
-    
-   const dashboardMetrics = {
-  'Report Type': 'Executive Dashboard Report',
-  'Generated Date': timestamp,
-  'Reporting Period': 'All Time',
-  'Total Revenue': totalRevenue.toLocaleString(),
-  'Total Orders': totalOrders,
-  'Pending Orders': pendingOrders,
-  'Completed Orders': data.orders.filter(o => o.status === 'completed').length,
-  'Total Products': data.products.length,
-  'Low Stock Alerts': lowStockItems.length,
-  'Total Customers': data.users.filter(u => u.role === 'customer').length,
-  'Active Vendors': data.vendors.length,
-  'Average Order Value': (totalRevenue / totalOrders).toFixed(2),
-  'Total Stock Value': data.products.reduce((sum, p) => sum + (p.stock * p.price), 0).toLocaleString()
-};
+    if (!isAdmin(currentUser) && !isVendor(currentUser)) {
+      alert('You are not authorized to generate reports.');
+      return;
+    }
 
+    const timestamp = new Date().toISOString().split('T')[0];
+
+    const dashboardMetrics = {
+      'Report Type': 'Executive Dashboard Report (Scoped View)',
+      'Generated Date': timestamp,
+      'Reporting Period': 'All Time',
+      'Total Revenue': adminView ? totalRevenue.toLocaleString() : 'REDACTED',
+      'Total Orders': totalOrders,
+      'Pending Orders': pendingOrders,
+      'Completed Orders': completedOrders,
+      'Total Products': data.products.length,
+      'Low Stock Alerts': lowStockItems,
+      'Total Customers': data.users.filter(u => u.role === 'customer').length,
+      'Active Vendors': data.vendors.length,
+      'Average Order Value': adminView
+        ? (totalRevenue / (totalOrders || 1)).toFixed(2)
+        : 'REDACTED',
+      'Total Stock Value': adminView
+        ? data.products
+            .reduce((sum, p) => sum + p.stock * p.price, 0)
+            .toLocaleString()
+        : 'REDACTED',
+    };
 
     const bestSellersData = bestSellers.map((product, index) => ({
-  'Rank': index + 1,
-  'Product Name': product.name,
-  'Category': product.category,
-  'Units Sold': product.sold,
-  'Unit Price': product.price, // <- fixed
-  'Total Revenue': (product.sold * product.price).toLocaleString(), // <- fixed
-  'Current Stock': product.stock,
-  'Stock Status': product.stock < 10 ? 'Low' : 'Good', // <- comma is correct here
-}));
+      Rank: index + 1,
+      'Product Name': product.name,
+      Category: product.category,
+      'Units Sold': product.sold,
+      'Unit Price': product.price,
+      'Total Revenue': (product.sold * product.price).toLocaleString(),
+      'Current Stock': product.stock,
+      'Stock Status': product.stock < 10 ? 'Low' : 'Good',
+    }));
 
-if (format === 'csv') {
-  const csv = [
-    '=== EXECUTIVE DASHBOARD REPORT ===',
-    `Generated on: ${timestamp}`,
-    '',
-    '=== KEY BUSINESS METRICS ===',
-    ...Object.entries(dashboardMetrics).map(([key, value]) => `${key},${value}`),
-    '',
-    '=== TOP PERFORMING PRODUCTS ===',
-    Object.keys(bestSellersData[0]).join(','),
-    ...bestSellersData.map(row => Object.values(row).join(',')),
-  ].join('\n');
+    if (format === 'csv') {
+      const csv = [
+        '=== EXECUTIVE DASHBOARD REPORT ===',
+        `Generated on: ${timestamp}`,
+        '',
+        '=== KEY BUSINESS METRICS ===',
+        ...Object.entries(dashboardMetrics).map(([key, value]) => `${key},${value}`),
+        '',
+        '=== TOP PERFORMING PRODUCTS ===',
+        bestSellersData.length ? Object.keys(bestSellersData[0]).join(',') : '',
+        ...bestSellersData.map(row => Object.values(row).join(',')),
+      ].join('\n');
 
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `dashboard_report_${timestamp}.csv`;
-  a.click();
-  window.URL.revokeObjectURL(url);
-} else if (format === 'pdf') {
-  const pdfContent = [
-    'EXECUTIVE DASHBOARD REPORT',
-    '========================',
-    `Generated: ${timestamp}`,
-    '',
-    'BUSINESS OVERVIEW',
-    '----------------',
-    ...Object.entries(dashboardMetrics).slice(2).map(([key, value]) => `${key}: ${value}`),
-    '',
-    'TOP PERFORMING PRODUCTS',
-    '----------------------',
-    ...bestSellers.map((product, index) => 
-      `${index + 1}. ${product.name} - ${product.sold} units sold (${(product.sold * product.price).toLocaleString()} revenue)`
-    ),
-    '',
-    'ALERTS & RECOMMENDATIONS',
-    '------------------------',
-    lowStockItems.length > 0 ? `• ${lowStockItems.length} products need restocking` : '• All products have sufficient stock',
-    pendingOrders > 0 ? `• ${pendingOrders} orders awaiting processing` : '• No pending orders',
-    '• Consider promotional campaigns for slow-moving inventory',
-    '• Monitor customer acquisition trends',
-  ].join('\n');
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `dashboard_report_${timestamp}.csv`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } else if (format === 'pdf') {
+      const pdfContent = [
+        'EXECUTIVE DASHBOARD REPORT',
+        '========================',
+        `Generated: ${timestamp}`,
+        '',
+        'BUSINESS OVERVIEW',
+        '----------------',
+        ...Object.entries(dashboardMetrics).map(([key, value]) => `${key}: ${value}`),
+        '',
+        'TOP PERFORMING PRODUCTS',
+        '----------------------',
+        ...bestSellers.map(
+          (product, index) =>
+            `${index + 1}. ${product.name} - ${product.sold} units sold ($${(
+              product.sold * product.price
+            ).toLocaleString()} revenue)`
+        ),
+      ].join('\n');
 
-  const blob = new Blob([pdfContent], { type: 'text/plain' });
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `dashboard_report_${timestamp}.txt`;
-  a.click();
-  window.URL.revokeObjectURL(url);
-}
-
+      const blob = new Blob([pdfContent], { type: 'text/plain' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `dashboard_report_${timestamp}.txt`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    }
   };
 
   return (
@@ -372,42 +453,84 @@ if (format === 'csv') {
           <p className="text-gray-600">Welcome back!</p>
         </div>
         <div className="flex gap-2">
-          <button 
-            onClick={() => generateDashboardReport('csv')}
-            className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center"
-          >
-            <Download className="w-4 h-4 mr-2" />
-            Export CSV
-          </button>
-          <button 
-            onClick={() => generateDashboardReport('pdf')}
-            className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg flex items-center"
-          >
-            <FileText className="w-4 h-4 mr-2" />
-            Export Report
-          </button>
+          {(isAdmin(currentUser) || isVendor(currentUser)) && (
+            <>
+              <button
+                onClick={() => generateDashboardReport('csv')}
+                className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center"
+              >
+                <Download className="w-4 h-4 mr-2" />
+                Export CSV
+              </button>
+              <button
+                onClick={() => generateDashboardReport('pdf')}
+                className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg flex items-center"
+              >
+                <FileText className="w-4 h-4 mr-2" />
+                Export Report
+              </button>
+            </>
+          )}
         </div>
       </div>
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="bg-white rounded-lg shadow-md p-6 border-l-4 border-blue-500">
-          <div className="flex items-center">
-            <div className="p-2 bg-blue-100 rounded-lg">
-              <DollarSign className="w-6 h-6 text-blue-600" />
+        {/* Admin only KPIs */}
+        {isAdmin(currentUser) && (
+          <>
+            <div className="bg-white rounded-lg shadow-md p-6">
+              <div className="flex items-center">
+                <DollarSign className="w-8 h-8 text-green-600" />
+                <div className="ml-4">
+                  <p className="text-sm font-medium text-gray-600">Total Revenue</p>
+                  <p className="text-2xl font-bold text-gray-900">
+                    ${totalRevenue.toLocaleString()}
+                  </p>
+                </div>
+              </div>
             </div>
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Total Revenue</p>
-              <p className="text-2xl font-bold text-gray-900">${totalRevenue.toLocaleString()}</p>
-            </div>
-          </div>
-        </div>
 
-        <div className="bg-white rounded-lg shadow-md p-6 border-l-4 border-green-500">
-          <div className="flex items-center">
-            <div className="p-2 bg-green-100 rounded-lg">
-              <ShoppingCart className="w-6 h-6 text-green-600" />
+            <div className="bg-white rounded-lg shadow-md p-6">
+              <div className="flex items-center">
+                <TrendingUp className="w-8 h-8 text-blue-600" />
+                <div className="ml-4">
+                  <p className="text-sm font-medium text-gray-600">This Month Revenue</p>
+                  <p className="text-2xl font-bold text-gray-900">
+                    ${monthlyRevenue.toLocaleString()}
+                  </p>
+                </div>
+              </div>
             </div>
+
+            <div className="bg-white rounded-lg shadow-md p-6">
+              <div className="flex items-center">
+                <BarChart3 className="w-8 h-8 text-orange-600" />
+                <div className="ml-4">
+                  <p className="text-sm font-medium text-gray-600">Avg Order Value</p>
+                  <p className="text-2xl font-bold text-gray-900">
+                    ${avgOrderValue.toFixed(2)}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-lg shadow-md p-6">
+              <div className="flex items-center">
+                <ShoppingCart className="w-8 h-8 text-purple-600" />
+                <div className="ml-4">
+                  <p className="text-sm font-medium text-gray-600">Completed Orders</p>
+                  <p className="text-2xl font-bold text-gray-900">{completedOrders}</p>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Shared KPIs */}
+        <div className="bg-white rounded-lg shadow-md p-6">
+          <div className="flex items-center">
+            <ShoppingCart className="w-8 h-8 text-green-600" />
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">Total Orders</p>
               <p className="text-2xl font-bold text-gray-900">{totalOrders}</p>
@@ -415,11 +538,9 @@ if (format === 'csv') {
           </div>
         </div>
 
-        <div className="bg-white rounded-lg shadow-md p-6 border-l-4 border-yellow-500">
+        <div className="bg-white rounded-lg shadow-md p-6">
           <div className="flex items-center">
-            <div className="p-2 bg-yellow-100 rounded-lg">
-              <AlertTriangle className="w-6 h-6 text-yellow-600" />
-            </div>
+            <AlertTriangle className="w-8 h-8 text-yellow-600" />
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">Pending Orders</p>
               <p className="text-2xl font-bold text-gray-900">{pendingOrders}</p>
@@ -427,11 +548,9 @@ if (format === 'csv') {
           </div>
         </div>
 
-        <div className="bg-white rounded-lg shadow-md p-6 border-l-4 border-red-500">
+        <div className="bg-white rounded-lg shadow-md p-6">
           <div className="flex items-center">
-            <div className="p-2 bg-red-100 rounded-lg">
-              <Package className="w-6 h-6 text-red-600" />
-            </div>
+            <Package className="w-8 h-8 text-red-600" />
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">Low Stock Items</p>
               <p className="text-2xl font-bold text-gray-900">{lowStockItems}</p>
@@ -442,10 +561,15 @@ if (format === 'csv') {
 
       {/* Best Sellers */}
       <div className="bg-white rounded-lg shadow-md p-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Best Selling Products</h2>
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">
+          Best Selling Products
+        </h2>
         <div className="space-y-3">
           {bestSellers.map((product, index) => (
-            <div key={product.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+            <div
+              key={product.id}
+              className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
+            >
               <div className="flex items-center">
                 <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
                   <span className="text-sm font-bold text-blue-600">#{index + 1}</span>
@@ -467,8 +591,12 @@ if (format === 'csv') {
   );
 };
 
-// User Management Component
-const UserManagementComponent = ({ data }) => {
+/* -------------------------
+   User Management Component
+   - Exports restricted to admin & vendor (per requirement: reports only for admin & vendor)
+   - Module already only available to admin in nav; kept safe guard
+   ------------------------- */
+const UserManagementComponent = ({ data, currentUser }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedRole, setSelectedRole] = useState('all');
 
@@ -480,6 +608,10 @@ const UserManagementComponent = ({ data }) => {
   });
 
   const generateUserReport = (format) => {
+    if (!isAdmin(currentUser) && !isVendor(currentUser)) {
+      alert('You are not authorized to generate user reports.');
+      return;
+    }
     const timestamp = new Date().toISOString().split('T')[0];
     const userReportData = data.users.map(user => {
       const userOrders = data.orders.filter(order => order.customerId === user.id);
@@ -498,46 +630,38 @@ const UserManagementComponent = ({ data }) => {
         'Customer Tier': totalSpent > 1000 ? 'Premium' : totalSpent > 500 ? 'Gold' : 'Standard'
       };
     });
-const userAnalytics = {
-  'Report Type': 'User Management Report',
-  'Generated Date': timestamp,
-  'Total Users': data.users.length,
-  'Admin Users': data.users.filter(u => u.role === 'admin').length,
-  'Vendor Users': data.users.filter(u => u.role === 'vendor').length,
-  'Customer Users': data.users.filter(u => u.role === 'customer').length,
-  'Active Users': data.users.filter(u => u.status === 'active').length,
-  'Premium Customers': userReportData.filter(u => u['Customer Tier'] === 'Premium').length,
-  'Total Customer Spent': data.users
-    .filter(u => u.role === 'customer')
-    .reduce((sum, user) => {
-      const userOrders = data.orders.filter(order => order.customerId === user.id);
-      return sum + userOrders.reduce((orderSum, order) => orderSum + order.total, 0);
-    }, 0)
-    .toFixed(2)
-};
+    const userAnalytics = {
+      'Report Type': 'User Management Report',
+      'Generated Date': timestamp,
+      'Total Users': data.users.length,
+      'Admin Users': data.users.filter(u => u.role === 'admin').length,
+      'Vendor Users': data.users.filter(u => u.role === 'vendor').length,
+      'Customer Users': data.users.filter(u => u.role === 'customer').length,
+      'Active Users': data.users.filter(u => u.status === 'active').length,
+      'Premium Customers': userReportData.filter(u => u['Customer Tier'] === 'Premium').length
+    };
 
-if (format === 'csv') {
-  const csv = [
-    '=== USER MANAGEMENT REPORT ===',
-    `Generated on: ${timestamp}`,
-    '',
-    '=== USER ANALYTICS ===',
-    ...Object.entries(userAnalytics).map(([key, value]) => `${key},${value}`),
-    '',
-    '=== DETAILED USER DATA ===',
-    Object.keys(userReportData[0]).join(','),
-    ...userReportData.map(row => Object.values(row).join(','))
-  ].join('\n');
+    if (format === 'csv') {
+      const csv = [
+        '=== USER MANAGEMENT REPORT ===',
+        `Generated on: ${timestamp}`,
+        '',
+        '=== USER ANALYTICS ===',
+        ...Object.entries(userAnalytics).map(([key, value]) => `${key},${value}`),
+        '',
+        '=== DETAILED USER DATA ===',
+        Object.keys(userReportData[0]).join(','),
+        ...userReportData.map(row => Object.values(row).join(','))
+      ].join('\n');
 
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `user_management_report_${timestamp}.csv`;
-  a.click();
-  window.URL.revokeObjectURL(url);
-}
-
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `user_management_report_${timestamp}.csv`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    }
   };
 
   return (
@@ -545,17 +669,21 @@ if (format === 'csv') {
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold text-gray-900">User Management</h1>
         <div className="flex gap-2">
-          <button 
-            onClick={() => generateUserReport('csv')}
-            className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center"
-          >
-            <Download className="w-4 h-4 mr-2" />
-            Export Report
-          </button>
-          <button className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center">
-            <Plus className="w-4 h-4 mr-2" />
-            Add User
-          </button>
+          {(isAdmin(currentUser) || isVendor(currentUser)) && (
+            <button 
+              onClick={() => generateUserReport('csv')}
+              className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center"
+            >
+              <Download className="w-4 h-4 mr-2" />
+              Export Report
+            </button>
+          )}
+          {isAdmin(currentUser) && (
+            <button className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center">
+              <Plus className="w-4 h-4 mr-2" />
+              Add User
+            </button>
+          )}
         </div>
       </div>
 
@@ -622,12 +750,16 @@ if (format === 'csv') {
                   </span>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-                  <button className="text-blue-600 hover:text-blue-900">
-                    <Edit className="w-4 h-4" />
-                  </button>
-                  <button className="text-red-600 hover:text-red-900">
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  {isAdmin(currentUser) && (
+                    <>
+                      <button className="text-blue-600 hover:text-blue-900">
+                        <Edit className="w-4 h-4" />
+                      </button>
+                      <button className="text-red-600 hover:text-red-900">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </>
+                  )}
                 </td>
               </tr>
             ))}
@@ -638,12 +770,21 @@ if (format === 'csv') {
   );
 };
 
-// Inventory Management Component
-const InventoryManagementComponent = ({ data }) => {
+/* -------------------------
+   Inventory Management Component
+   - Exports allowed only for admin & vendor
+   - Vendor sees only their products (already scoped)
+   ------------------------- */
+const InventoryManagementComponent = ({ data, currentUser }) => {
   const lowStockProducts = data.products.filter(product => product.stock < 10);
   const totalStockValue = data.products.reduce((sum, product) => sum + (product.stock * product.price), 0);
 
   const generateInventoryReport = (format) => {
+    if (!isAdmin(currentUser) && !isVendor(currentUser)) {
+      alert('You are not authorized to generate inventory reports.');
+      return;
+    }
+
     const timestamp = new Date().toISOString().split('T')[0];
     const reportData = data.products.map(product => ({
       'Product ID': product.id,
@@ -658,83 +799,82 @@ const InventoryManagementComponent = ({ data }) => {
       'Vendor ID': product.vendorId || 'N/A'
     }));
 
-const summaryData = {
-  'Report Type': 'Inventory Management Report',
-  'Generated Date': timestamp,
-  'Total Products': data.products.length,
-  'Low Stock Items': lowStockProducts.length,
-  'Total Stock Value': totalStockValue.toLocaleString(),
-  'Total Units in Stock': data.products.reduce((sum, p) => sum + p.stock, 0),
-  'Total Units Sold': data.products.reduce((sum, p) => sum + p.sold, 0),
-  'Total Revenue': data.products.reduce((sum, p) => sum + (p.sold * p.price), 0).toLocaleString()
-};
+    const summaryData = {
+      'Report Type': 'Inventory Management Report',
+      'Generated Date': timestamp,
+      'Total Products': data.products.length,
+      'Low Stock Items': lowStockProducts.length,
+      'Total Stock Value': totalStockValue.toLocaleString()
+    };
 
-if (format === 'csv') {
-  const csv = [
-    '=== INVENTORY MANAGEMENT REPORT ===',
-    `Generated on: ${timestamp}`,
-    '',
-    '=== SUMMARY ===',
-    ...Object.entries(summaryData).map(([key, value]) => `${key},${value}`),
-    '',
-    '=== DETAILED INVENTORY DATA ===',
-    Object.keys(reportData[0]).join(','),
-    ...reportData.map(row => Object.values(row).join(','))
-  ].join('\n');
+    if (format === 'csv') {
+      const csv = [
+        '=== INVENTORY MANAGEMENT REPORT ===',
+        `Generated on: ${timestamp}`,
+        '',
+        '=== SUMMARY ===',
+        ...Object.entries(summaryData).map(([key, value]) => `${key},${value}`),
+        '',
+        '=== DETAILED INVENTORY DATA ===',
+        Object.keys(reportData[0]).join(','),
+        ...reportData.map(row => Object.values(row).join(','))
+      ].join('\n');
 
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `inventory_report_${timestamp}.csv`;
-  a.click();
-  window.URL.revokeObjectURL(url);
-} else if (format === 'json') {
-  const jsonData = {
-    reportInfo: summaryData,
-    inventoryData: reportData,
-    lowStockAlerts: lowStockProducts.map(p => ({
-      id: p.id,
-      name: p.name,
-      currentStock: p.stock,
-      alertLevel: 'LOW'
-    }))
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `inventory_report_${timestamp}.csv`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } else if (format === 'json') {
+      const jsonData = {
+        reportInfo: summaryData,
+        inventoryData: reportData,
+        lowStockAlerts: lowStockProducts.map(p => ({
+          id: p.id,
+          name: p.name,
+          currentStock: p.stock,
+          alertLevel: 'LOW'
+        }))
+      };
+
+      const blob = new Blob([JSON.stringify(jsonData, null, 2)], { type: 'application/json' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `inventory_report_${timestamp}.json`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    }
   };
 
-  const blob = new Blob([JSON.stringify(jsonData, null, 2)], { type: 'application/json' });
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `inventory_report_${timestamp}.json`;
-  a.click();
-  window.URL.revokeObjectURL(url);
-}
 
-  };
-
-  return (
+   return (
     <div className="p-6 space-y-6">
       <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold text-gray-900">Inventory Management</h1>
+        <h1 className="text-2xl font-bold text-gray-900">
+          {isVendor(currentUser) ? 'My Products' : 'Inventory Management'}
+        </h1>
         <div className="flex gap-2">
-          <button 
-            onClick={() => generateInventoryReport('csv')}
-            className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center"
-          >
-            <Download className="w-4 h-4 mr-2" />
-            Export CSV
-          </button>
-          <button 
-            onClick={() => generateInventoryReport('json')}
-            className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg flex items-center"
-          >
-            <Download className="w-4 h-4 mr-2" />
-            Export JSON
-          </button>
-          <button className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center">
-            <Plus className="w-4 h-4 mr-2" />
-            Add Product
-          </button>
+          {(isAdmin(currentUser) || isVendor(currentUser)) && (
+            <>
+              <button onClick={() => generateInventoryReport('csv')} className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center">
+                <Download className="w-4 h-4 mr-2" />
+                Export CSV
+              </button>
+              <button onClick={() => generateInventoryReport('json')} className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg flex items-center">
+                <Download className="w-4 h-4 mr-2" />
+                Export JSON
+              </button>
+            </>
+          )}
+          {isAdmin(currentUser) && (
+            <button className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center">
+              <Plus className="w-4 h-4 mr-2" />
+              Add Product
+            </button>
+          )}
         </div>
       </div>
 
@@ -749,15 +889,17 @@ if (format === 'csv') {
             </div>
           </div>
         </div>
-        <div className="bg-white rounded-lg shadow-md p-6">
-          <div className="flex items-center">
-            <DollarSign className="w-8 h-8 text-green-600" />
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Stock Value</p>
-              <p className="text-2xl font-bold text-gray-900">${totalStockValue.toLocaleString()}</p>
+        {(isAdmin(currentUser) || isVendor(currentUser)) && (
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <div className="flex items-center">
+              <DollarSign className="w-8 h-8 text-green-600" />
+              <div className="ml-4">
+                <p className="text-sm font-medium text-gray-600">Stock Value</p>
+                <p className="text-2xl font-bold text-gray-900">${totalStockValue.toLocaleString()}</p>
+              </div>
             </div>
           </div>
-        </div>
+        )}
         <div className="bg-white rounded-lg shadow-md p-6">
           <div className="flex items-center">
             <AlertTriangle className="w-8 h-8 text-red-600" />
@@ -768,7 +910,6 @@ if (format === 'csv') {
           </div>
         </div>
       </div>
-
       {/* Low Stock Alert */}
       {lowStockProducts.length > 0 && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4">
@@ -788,7 +929,7 @@ if (format === 'csv') {
       )}
 
       {/* Products Table */}
-      <div className="bg-white rounded-lg shadow-md overflow-hidden">
+  <div className="bg-white rounded-lg shadow-md overflow-hidden">
         <table className="w-full">
           <thead className="bg-gray-50">
             <tr>
@@ -812,22 +953,22 @@ if (format === 'csv') {
                   </span>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap">
-                  <span className={`text-sm font-medium ${
-                    product.stock < 10 ? 'text-red-600' : 'text-gray-900'
-                  }`}>
+                  <span className={`text-sm font-medium ${product.stock < 10 ? 'text-red-600' : 'text-gray-900'}`}>
                     {product.stock}
                   </span>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                  ${product.price}
+                  ${(product.price).toLocaleString()}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                   {product.sold}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-                  <button className="text-blue-600 hover:text-blue-900">
-                    <Edit className="w-4 h-4" />
-                  </button>
+                  {(isAdmin(currentUser) || isVendor(currentUser)) && (
+                    <button className="text-blue-600 hover:text-blue-900">
+                      <Edit className="w-4 h-4" />
+                    </button>
+                  )}
                   <button className="text-green-600 hover:text-green-900">
                     <Eye className="w-4 h-4" />
                   </button>
@@ -841,7 +982,280 @@ if (format === 'csv') {
   );
 };
 
-// Settings Component
+/* -------------------------
+   Sales Component
+   - Reports allowed for admin & vendor only
+   - Customers can see their orders and generate invoices per order
+   - Vendors see their own sales only (scoped)
+   - Admin sees full platform sales and full details
+   ------------------------- */
+const SalesComponent = ({ data, currentUser }) => {
+  const totalRevenue = data.orders.reduce((sum, order) => sum + order.total, 0);
+  const completedOrders = data.orders.filter(order => order.status === 'completed');
+  const avgOrderValue = data.orders.length ? (totalRevenue / data.orders.length) : 0;
+  const monthlyRevenue = data.orders.filter(order => {
+    const orderDate = new Date(order.date);
+    const currentMonth = new Date().getMonth();
+    return orderDate.getMonth() === currentMonth;
+  }).reduce((sum, order) => sum + order.total, 0);
+
+  const generateSalesReport = (format) => {
+    if (!isAdmin(currentUser) && !isVendor(currentUser)) {
+      alert('You are not authorized to generate sales reports.');
+      return;
+    }
+
+    const timestamp = new Date().toISOString().split('T')[0];
+    const reportData = data.orders.map(order => {
+      const product = data.products.find(p => p.id === order.productId);
+      const customer = data.users.find(u => u.id === order.customerId);
+      const vendor = data.vendors.find(v => v.id === order.vendorId);
+      
+      return {
+        'Order ID': order.id,
+        'Order Date': order.date,
+        'Customer Name': customer?.name || 'Unknown',
+        'Customer Email': customer?.email || 'N/A',
+        'Product Name': product?.name || 'Unknown',
+        'Product Category': product?.category || 'N/A',
+        'Vendor Name': vendor?.name || 'Unknown',
+        'Quantity': order.quantity,
+        'Unit Price ($)': product?.price || 0,
+        'Total Amount ($)': order.total,
+        'Order Status': order.status,
+        'Commission Rate (%)': vendor?.commission || 0,
+        'Commission Amount ($)': vendor ? ((order.total * vendor.commission) / 100).toFixed(2) : 0
+      };
+    });
+
+    const analytics = {
+      'Report Type': 'Sales & Revenue Report (Scoped)',
+      'Generated Date': timestamp,
+      'Total Orders': data.orders.length,
+      'Completed Orders': completedOrders.length,
+      'Pending Orders': data.orders.filter(o => o.status === 'pending').length,
+      'Cancelled Orders': data.orders.filter(o => o.status === 'cancelled').length,
+      'Total Revenue': isAdmin(currentUser) ? totalRevenue.toLocaleString() : 'REDACTED',
+      'Monthly Revenue': isAdmin(currentUser) ? monthlyRevenue.toLocaleString() : 'REDACTED',
+      'Average Order Value': isAdmin(currentUser) ? avgOrderValue.toFixed(2) : 'REDACTED'
+    };
+
+    if (format === 'csv') {
+      const csv = [
+        '=== SALES & REVENUE REPORT ===',
+        `Generated on: ${timestamp}`,
+        '',
+        '=== SALES ANALYTICS ===',
+        ...Object.entries(analytics).map(([key, value]) => `${key},${value}`),
+        '',
+        '=== DETAILED SALES DATA ===',
+        Object.keys(reportData[0]).join(','),
+        ...reportData.map(row => Object.values(row).join(','))
+      ].join('\n');
+
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `sales_report_${timestamp}.csv`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+
+    } else if (format === 'excel') {
+      const excelData = [
+        '=== SALES DASHBOARD EXPORT ===',
+        `Report Generated: ${timestamp}`,
+        '',
+        '=== KEY METRICS ===',
+        'Metric,Value',
+        ...Object.entries(analytics).map(([key, value]) => `${key},${value}`),
+        '',
+        '=== COMPLETE ORDER DETAILS ===',
+        Object.keys(reportData[0]).join(','),
+        ...reportData.map(row => Object.values(row).join(','))
+      ].join('\n');
+
+      const blob = new Blob([excelData], { type: 'application/vnd.ms-excel' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `sales_report_${timestamp}.xls`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    }
+  };
+
+  const generateInvoiceForOrder = (order) => {
+    // Only the customer who owns the order (or admin) should generate a customer invoice
+    if (!isCustomer(currentUser) && !isAdmin(currentUser)) {
+      alert('Only customers and admins can generate invoices from this view.');
+      return;
+    }
+    // If customer, ensure they own the order
+    if (isCustomer(currentUser) && order.customerId !== currentUser.id) {
+      alert('You can only generate invoices for your own orders.');
+      return;
+    }
+
+    const product = data.products.find(p => p.id === order.productId);
+    const timestamp = new Date().toISOString().split('T')[0];
+    const invoiceContent = [
+      `INVOICE`,
+      `Invoice Date: ${timestamp}`,
+      `Invoice No: INV-${order.id}`,
+      '',
+      `Customer ID: ${order.customerId}`,
+      `Product: ${product?.name || 'Unknown'}`,
+      `Quantity: ${order.quantity}`,
+      `Unit Price: ${product?.price || 0}`,
+      `Total: $${order.total}`,
+      '',
+      `Status: ${order.status}`,
+      '',
+      `Thank you for your purchase!`
+    ].join('\n');
+
+    const blob = new Blob([invoiceContent], { type: 'text/plain' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `invoice_order_${order.id}.txt`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+  };
+
+ return (
+    <div className="p-6 space-y-6">
+      <div className="flex justify-between items-center">
+        <h1 className="text-2xl font-bold text-gray-900">
+          {isCustomer(currentUser) ? 'My Orders' : 'Sales & Revenue'}
+        </h1>
+        <div className="flex gap-2">
+          {(isAdmin(currentUser) || isVendor(currentUser)) && (
+            <>
+              <button onClick={() => generateSalesReport('csv')} className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center">
+                <Download className="w-4 h-4 mr-2" />
+                Export CSV
+              </button>
+              <button onClick={() => generateSalesReport('excel')} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center">
+                <Download className="w-4 h-4 mr-2" />
+                Export Excel
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+      {/* Revenue Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        {isAdmin(currentUser) && (
+          <>
+            <div className="bg-white rounded-lg shadow-md p-6">
+              <div className="flex items-center">
+                <DollarSign className="w-8 h-8 text-green-600" />
+                <div className="ml-4">
+                  <p className="text-sm font-medium text-gray-600">Total Revenue</p>
+                  <p className="text-2xl font-bold text-gray-900">${totalRevenue.toLocaleString()}</p>
+                </div>
+              </div>
+            </div>
+            <div className="bg-white rounded-lg shadow-md p-6">
+              <div className="flex items-center">
+                <TrendingUp className="w-8 h-8 text-blue-600" />
+                <div className="ml-4">
+                  <p className="text-sm font-medium text-gray-600">This Month</p>
+                  <p className="text-2xl font-bold text-gray-900">${monthlyRevenue.toLocaleString()}</p>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+
+        <div className="bg-white rounded-lg shadow-md p-6">
+          <div className="flex items-center">
+            <ShoppingCart className="w-8 h-8 text-purple-600" />
+            <div className="ml-4">
+              <p className="text-sm font-medium text-gray-600">Completed Orders</p>
+              <p className="text-2xl font-bold text-gray-900">{completedOrders.length}</p>
+            </div>
+          </div>
+        </div>
+
+        {isAdmin(currentUser) && (
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <div className="flex items-center">
+              <BarChart3 className="w-8 h-8 text-orange-600" />
+              <div className="ml-4">
+                <p className="text-sm font-medium text-gray-600">Avg Order Value</p>
+                <p className="text-2xl font-bold text-gray-900">${avgOrderValue.toFixed(2)}</p>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Orders Table */}
+      <div className="bg-white rounded-lg shadow-md overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-200">
+          <h2 className="text-lg font-semibold text-gray-900">Recent Orders</h2>
+        </div>
+        <table className="w-full">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Order ID</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Quantity</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+              {isCustomer(currentUser) && (
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Invoice</th>
+              )}
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-gray-200">
+            {data.orders.map(order => {
+              const product = data.products.find(p => p.id === order.productId);
+              return (
+                <tr key={order.id} className="hover:bg-gray-50">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">#{order.id}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{product?.name || 'Unknown'}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{order.quantity}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    {/* Admin and Vendor see actual totals; customers see their own */}
+                    ${order.total}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                      order.status === 'completed' ? 'bg-green-100 text-green-800' :
+                      order.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                      'bg-red-100 text-red-800'
+                    }`}>
+                      {order.status}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{order.date}</td>
+                  {isCustomer(currentUser) && (
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      <button
+                        onClick={() => generateInvoiceForOrder(order)}
+                        className="bg-blue-600 text-white px-3 py-1 rounded-lg"
+                      >
+                        Generate Invoice
+                      </button>
+                    </td>
+                  )}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+/* -------------------------
+   Settings Component (unchanged)
+   ------------------------- */
 const SettingsComponent = () => {
   const [settings, setSettings] = useState({
     siteName: 'E-commerce ERP',
@@ -968,231 +1382,11 @@ const SettingsComponent = () => {
   );
 };
 
-// Sales Component
-const SalesComponent = ({ data }) => {
-  const totalRevenue = data.orders.reduce((sum, order) => sum + order.total, 0);
-  const completedOrders = data.orders.filter(order => order.status === 'completed');
-  const avgOrderValue = totalRevenue / data.orders.length;
-  const monthlyRevenue = data.orders.filter(order => {
-    const orderDate = new Date(order.date);
-    const currentMonth = new Date().getMonth();
-    return orderDate.getMonth() === currentMonth;
-  }).reduce((sum, order) => sum + order.total, 0);
-
-  const generateSalesReport = (format) => {
-    const timestamp = new Date().toISOString().split('T')[0];
-    const reportData = data.orders.map(order => {
-      const product = data.products.find(p => p.id === order.productId);
-      const customer = data.users.find(u => u.id === order.customerId);
-      const vendor = data.vendors.find(v => v.id === order.vendorId);
-      
-      return {
-        'Order ID': order.id,
-        'Order Date': order.date,
-        'Customer Name': customer?.name || 'Unknown',
-        'Customer Email': customer?.email || 'N/A',
-        'Product Name': product?.name || 'Unknown',
-        'Product Category': product?.category || 'N/A',
-        'Vendor Name': vendor?.name || 'Unknown',
-        'Quantity': order.quantity,
-        'Unit Price ($)': product?.price || 0,
-        'Total Amount ($)': order.total,
-        'Order Status': order.status,
-        'Commission Rate (%)': vendor?.commission || 0,
-        'Commission Amount ($)': vendor ? ((order.total * vendor.commission) / 100).toFixed(2) : 0
-      };
-    });
-
-   const analytics = {
-  'Report Type': 'Sales & Revenue Report',
-  'Generated Date': timestamp,
-  'Total Orders': data.orders.length,
-  'Completed Orders': completedOrders.length,
-  'Pending Orders': data.orders.filter(o => o.status === 'pending').length,
-  'Cancelled Orders': data.orders.filter(o => o.status === 'cancelled').length,
-  'Total Revenue': totalRevenue.toLocaleString(),
-  'Monthly Revenue': monthlyRevenue.toLocaleString(),
-  'Average Order Value': avgOrderValue.toFixed(2),
-  'Total Commission Paid': data.orders.reduce((sum, order) => {
-    const vendor = data.vendors.find(v => v.id === order.vendorId);
-    return sum + (vendor ? (order.total * vendor.commission) / 100 : 0);
-  }, 0).toFixed(2),
-  'Best Selling Product': data.products.reduce((max, product) => product.sold > max.sold ? product : max, data.products[0]).name
-};
-
-if (format === 'csv') {
-  const csv = [
-    '=== SALES & REVENUE REPORT ===',
-    `Generated on: ${timestamp}`,
-    '',
-    '=== SALES ANALYTICS ===',
-    ...Object.entries(analytics).map(([key, value]) => `${key},${value}`),
-    '',
-    '=== DETAILED SALES DATA ===',
-    Object.keys(reportData[0]).join(','),
-    ...reportData.map(row => Object.values(row).join(','))
-  ].join('\n');
-
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `sales_report_${timestamp}.csv`;
-  a.click();
-  window.URL.revokeObjectURL(url);
-
-} else if (format === 'excel') {
-  const excelData = [
-    '=== SALES DASHBOARD EXPORT ===',
-    `Report Generated: ${timestamp}`,
-    '',
-    '=== KEY METRICS ===',
-    'Metric,Value',
-    ...Object.entries(analytics).slice(2).map(([key, value]) => `${key},${value}`),
-    '',
-    '=== REVENUE BY STATUS ===',
-    'Status,Count,Revenue',
-    `Completed,${completedOrders.length},${completedOrders.reduce((sum, order) => sum + order.total, 0)}`,
-    `Pending,${data.orders.filter(o => o.status === 'pending').length},${data.orders.filter(o => o.status === 'pending').reduce((sum, order) => sum + order.total, 0)}`,
-    '',
-    '=== COMPLETE ORDER DETAILS ===',
-    Object.keys(reportData[0]).join(','),
-    ...reportData.map(row => Object.values(row).join(','))
-  ].join('\n');
-
-  const blob = new Blob([excelData], { type: 'application/vnd.ms-excel' });
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `sales_report_${timestamp}.xls`;
-  a.click();
-  window.URL.revokeObjectURL(url);
-}
-
-  };
-
-  return (
-    <div className="p-6 space-y-6">
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold text-gray-900">Sales & Revenue</h1>
-        <div className="flex gap-2">
-          <button 
-            onClick={() => generateSalesReport('csv')}
-            className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center"
-          >
-            <Download className="w-4 h-4 mr-2" />
-            Export CSV
-          </button>
-          <button 
-            onClick={() => generateSalesReport('excel')}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center"
-          >
-            <Download className="w-4 h-4 mr-2" />
-            Export Excel
-          </button>
-          <button className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg flex items-center">
-            <FileText className="w-4 h-4 mr-2" />
-            Generate Invoice
-          </button>
-        </div>
-      </div>
-
-      {/* Revenue Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="bg-white rounded-lg shadow-md p-6">
-          <div className="flex items-center">
-            <DollarSign className="w-8 h-8 text-green-600" />
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Total Revenue</p>
-              <p className="text-2xl font-bold text-gray-900">${totalRevenue.toLocaleString()}</p>
-            </div>
-          </div>
-        </div>
-        <div className="bg-white rounded-lg shadow-md p-6">
-          <div className="flex items-center">
-            <TrendingUp className="w-8 h-8 text-blue-600" />
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">This Month</p>
-              <p className="text-2xl font-bold text-gray-900">${monthlyRevenue.toLocaleString()}</p>
-            </div>
-          </div>
-        </div>
-        <div className="bg-white rounded-lg shadow-md p-6">
-          <div className="flex items-center">
-            <ShoppingCart className="w-8 h-8 text-purple-600" />
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Completed Orders</p>
-              <p className="text-2xl font-bold text-gray-900">{completedOrders.length}</p>
-            </div>
-          </div>
-        </div>
-        <div className="bg-white rounded-lg shadow-md p-6">
-          <div className="flex items-center">
-            <BarChart3 className="w-8 h-8 text-orange-600" />
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Avg Order Value</p>
-              <p className="text-2xl font-bold text-gray-900">${avgOrderValue.toFixed(2)}</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Orders Table */}
-      <div className="bg-white rounded-lg shadow-md overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-200">
-          <h2 className="text-lg font-semibold text-gray-900">Recent Orders</h2>
-        </div>
-        <table className="w-full">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Order ID</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Quantity</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {data.orders.map(order => {
-              const product = data.products.find(p => p.id === order.productId);
-              return (
-                <tr key={order.id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                    #{order.id}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                    {product?.name || 'Unknown'}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                    {order.quantity}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                    ${order.total}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                      order.status === 'completed' ? 'bg-green-100 text-green-800' :
-                      order.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
-                      'bg-red-100 text-red-800'
-                    }`}>
-                      {order.status}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                    {order.date}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-};
-
-// Main ERP Component
+/* -------------------------
+   Main ERP Component
+   - Uses scoped data per user so components only receive allowed records
+   - Modules list unchanged but content is scoped and UI controls are guarded
+   ------------------------- */
 const EcommerceERP = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
@@ -1251,20 +1445,41 @@ const EcommerceERP = () => {
 
   const modules = getModulesForRole(currentUser?.role);
 
+  // Scope data per current user (so components receive only permitted records)
+  const scopedData = getScopedData(currentUser, data);
+
   const renderContent = () => {
     switch (activeModule) {
       case 'dashboard':
-        return <DashboardComponent data={data} />;
+        return <DashboardComponent data={scopedData} currentUser={currentUser} />;
       case 'users':
-        return <UserManagementComponent data={data} />;
+        // Only admin should be able to access user management (nav only shows for admin, but safe guard anyway)
+        if (!isAdmin(currentUser)) {
+          return (
+            <div className="p-6">
+              <h2 className="text-xl font-semibold">Access Denied</h2>
+              <p className="text-gray-600 mt-2">You are not authorized to view User Management.</p>
+            </div>
+          );
+        }
+        return <UserManagementComponent data={scopedData} currentUser={currentUser} />;
       case 'inventory':
-        return <InventoryManagementComponent data={data} />;
+        return <InventoryManagementComponent data={scopedData} currentUser={currentUser} />;
       case 'sales':
-        return <SalesComponent data={data} />;
+        return <SalesComponent data={scopedData} currentUser={currentUser} />;
       case 'settings':
+        // Only admin sees settings in nav as well, but safe guard anyway
+        if (!isAdmin(currentUser)) {
+          return (
+            <div className="p-6">
+              <h2 className="text-xl font-semibold">Access Denied</h2>
+              <p className="text-gray-600 mt-2">You are not authorized to view Settings.</p>
+            </div>
+          );
+        }
         return <SettingsComponent />;
       default:
-        return <DashboardComponent data={data} />;
+        return <DashboardComponent data={scopedData} currentUser={currentUser} />;
     }
   };
 
