@@ -1,87 +1,153 @@
-// EcommerceERP.tsx
 import React, { useState, useEffect } from 'react';
 import { 
   Users, Package, DollarSign, TrendingUp, AlertTriangle, 
   Download, Settings, BarChart3, ShoppingCart, Eye,
   UserCheck, FileText, Shield, Bell, Calendar,
   ArrowUp, ArrowDown, Filter, Search, Plus,
-  Edit, Trash2, LogOut, Home, Menu, X, Lock, User
+  Edit, Trash2, LogOut, Home, Menu, X, Lock, User,
+  Minus
 } from 'lucide-react';
 
-// Mock Data
-const initialData = {
-  users: [
-    { id: 1, name: 'John Admin', email: 'admin@erp.com', role: 'admin', status: 'active' },
-    { id: 2, name: 'Jane Vendor', email: 'vendor@erp.com', role: 'vendor', status: 'active' },
-    { id: 3, name: 'Bob Customer', email: 'customer@erp.com', role: 'customer', status: 'active' }
-  ],
-  products: [
-    { id: 1, name: 'Laptop Pro', category: 'Electronics', stock: 25, price: 999, vendorId: 2, sold: 45 },
-    { id: 2, name: 'Smartphone X', category: 'Electronics', stock: 5, price: 699, vendorId: 2, sold: 89 },
-    { id: 3, name: 'Headphones', category: 'Audio', stock: 50, price: 199, vendorId: 2, sold: 23 }
-  ],
-  orders: [
-    { id: 1, customerId: 3, vendorId: 2, productId: 1, quantity: 2, total: 1998, status: 'completed', date: '2024-09-20' },
-    { id: 2, customerId: 3, vendorId: 2, productId: 2, quantity: 1, total: 699, status: 'pending', date: '2024-09-22' }
-  ],
-  vendors: [
-    { id: 2, name: 'TechStore Inc', email: 'vendor@techstore.com', commission: 15, totalSales: 25670, productsCount: 3 }
-  ]
-};
+// API Service Functions
+const API_BASE = 'http://localhost:5000/api';
 
-/* -------------------------
-   Helper role-checks & scoping
-   ------------------------- */
-const isAdmin = (user) => user?.role === 'admin';
-const isVendor = (user) => user?.role === 'vendor';
-const isCustomer = (user) => user?.role === 'customer';
+class ApiService {
+  static token = localStorage.getItem('token');
 
-/**
- * Returns a view of the data scoped by the current user's role:
- * - admin: full data
- * - vendor: only vendor's products & orders, but vendors won't see platform totalRevenue in UI
- * - customer: only customer's orders
- */
-const getScopedData = (user, data) => {
-  if (!user) return { ...data };
-
-  if (isAdmin(user)) {
-    return { ...data };
+  static setToken(token) {
+    this.token = token;
+    localStorage.setItem('token', token);
   }
 
-  if (isVendor(user)) {
-    const vendorId = user.id; // in mock credentials vendor id is 2
-    const vendorProducts = data.products.filter(p => p.vendorId === vendorId);
-    const vendorOrders = data.orders.filter(o => o.vendorId === vendorId);
-    const vendorInfo = data.vendors.find(v => v.id === vendorId) ? [data.vendors.find(v => v.id === vendorId)] : [];
-    // keep user list but clients' data may be limited in UI
-    return {
-      ...data,
-      products: vendorProducts,
-      orders: vendorOrders,
-      vendors: vendorInfo
+  static removeToken() {
+    this.token = null;
+    localStorage.removeItem('token');
+  }
+
+  static async request(endpoint, options = {}) {
+    const url = `${API_BASE}${endpoint}`;
+    const config = {
+      headers: {
+        'Content-Type': 'application/json',
+        ...(this.token && { Authorization: `Bearer ${this.token}` }),
+        ...options.headers,
+      },
+      ...options,
     };
+
+    try {
+      const response = await fetch(url, config);
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Something went wrong');
+      }
+
+      return data;
+    } catch (error) {
+      console.error('API Error:', error);
+      throw error;
+    }
   }
 
-  if (isCustomer(user)) {
-    const customerId = user.id;
-    const customerOrders = data.orders.filter(o => o.customerId === customerId);
-    // products shown are only those in customer's orders for reference (optional)
-    const productIds = new Set(customerOrders.map(o => o.productId));
-    const products = data.products.filter(p => productIds.has(p.id));
-    return {
-      ...data,
-      products,
-      orders: customerOrders
-    };
+  // Auth methods
+  static async login(credentials) {
+    return this.request('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify(credentials),
+    });
   }
 
-  return { ...data };
-};
+  static async register(userData) {
+    return this.request('/auth/register', {
+      method: 'POST',
+      body: JSON.stringify(userData),
+    });
+  }
+
+  static async getMe() {
+    return this.request('/auth/me');
+  }
+
+  // Product methods
+  static async getProducts(params = {}) {
+    const query = new URLSearchParams(params).toString();
+    return this.request(`/products${query ? `?${query}` : ''}`);
+  }
+
+  static async createProduct(productData) {
+    return this.request('/products', {
+      method: 'POST',
+      body: JSON.stringify(productData),
+    });
+  }
+
+  // Cart methods
+  static async getCart() {
+    return this.request('/cart');
+  }
+
+  static async addToCart(productId, quantity = 1) {
+    return this.request('/cart/add', {
+      method: 'POST',
+      body: JSON.stringify({ productId, quantity }),
+    });
+  }
+
+  static async updateCartItem(productId, quantity) {
+    return this.request('/cart/update', {
+      method: 'PUT',
+      body: JSON.stringify({ productId, quantity }),
+    });
+  }
+
+  static async removeFromCart(productId) {
+    return this.request(`/cart/remove/${productId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  static async clearCart() {
+    return this.request('/cart/clear', {
+      method: 'DELETE',
+    });
+  }
+
+  // Order methods
+  static async createOrder(orderData) {
+    return this.request('/orders', {
+      method: 'POST',
+      body: JSON.stringify(orderData),
+    });
+  }
+
+  static async getOrders(params = {}) {
+    const query = new URLSearchParams(params).toString();
+    return this.request(`/orders${query ? `?${query}` : ''}`);
+  }
+
+  // User methods
+  static async getUsers(params = {}) {
+    const query = new URLSearchParams(params).toString();
+    return this.request(`/users${query ? `?${query}` : ''}`);
+  }
+
+  static async updateUser(userId, userData) {
+    return this.request(`/users/${userId}`, {
+      method: 'PUT',
+      body: JSON.stringify(userData),
+    });
+  }
+
+  static async deleteUser(userId) {
+    return this.request(`/users/${userId}`, {
+      method: 'DELETE',
+    });
+  }
+}
 
 /* -------------------------
    Authentication Component
-   (unchanged except uses same demo credentials)
    ------------------------- */
 const AuthenticationComponent = ({ onLogin }) => {
   const [isLogin, setIsLogin] = useState(true);
@@ -129,39 +195,32 @@ const AuthenticationComponent = ({ onLogin }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
     if (!validateForm()) return;
-    
     setIsLoading(true);
-    
-    // Simulate API call
-    setTimeout(() => {
+
+    try {
+      let response;
       if (isLogin) {
-        // Demo credentials for testing
-        const demoCredentials = {
-          'admin@erp.com': { role: 'admin', name: 'John Admin', id: 1 },
-          'vendor@erp.com': { role: 'vendor', name: 'Jane Vendor', id: 2 },
-          'customer@erp.com': { role: 'customer', name: 'Bob Customer', id: 3 }
-        };
-        
-        const user = demoCredentials[formData.email];
-        if (user && formData.password === 'demo123') {
-          onLogin(user);
-        } else {
-          setErrors({ general: 'Invalid credentials. Try: admin@erp.com / demo123' });
-        }
-      } else {
-        // Simulate successful signup
-        const newUser = {
-          id: Date.now(),
+        response = await ApiService.login({
           email: formData.email,
+          password: formData.password
+        });
+      } else {
+        response = await ApiService.register({
           name: formData.name,
+          email: formData.email,
+          password: formData.password,
           role: formData.role
-        };
-        onLogin(newUser);
+        });
       }
+
+      ApiService.setToken(response.token);
+      onLogin(response.user);
+    } catch (error) {
+      setErrors({ general: error.message });
+    } finally {
       setIsLoading(false);
-    }, 1500);
+    }
   };
 
   return (
@@ -179,18 +238,6 @@ const AuthenticationComponent = ({ onLogin }) => {
             {isLogin ? 'Welcome back! Please sign in to continue.' : 'Join our platform and start managing your business.'}
           </p>
         </div>
-
-        {/* Demo Credentials Info */}
-        {isLogin && (
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <h3 className="text-sm font-medium text-blue-800 mb-2">Demo Credentials:</h3>
-            <div className="text-xs text-blue-700 space-y-1">
-              <div>Admin: admin@erp.com / demo123</div>
-              <div>Vendor: vendor@erp.com / demo123</div>
-              <div>Customer: customer@erp.com / demo123</div>
-            </div>
-          </div>
-        )}
 
         {/* Form */}
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
@@ -267,7 +314,6 @@ const AuthenticationComponent = ({ onLogin }) => {
                 >
                   <option value="customer">Customer</option>
                   <option value="vendor">Vendor</option>
-                  <option value="admin">Administrator</option>
                 </select>
                 <p className="mt-1 text-xs text-gray-500">
                   Choose your account type based on how you'll use the platform
@@ -324,370 +370,366 @@ const AuthenticationComponent = ({ onLogin }) => {
 };
 
 /* -------------------------
-   Dashboard Component
-   - Hides admin-only metrics for non-admins
+   Cart Component for Customers
    ------------------------- */
-const DashboardComponent = ({ data, currentUser }) => {
-  // 📊 Metrics
-  const totalRevenue = data.orders.reduce((sum, order) => sum + order.total, 0);
-  const totalOrders = data.orders.length;
-  const pendingOrders = data.orders.filter(order => order.status === 'pending').length;
-  const completedOrders = data.orders.filter(order => order.status === 'completed').length;
-  const lowStockItems = data.products.filter(product => product.stock < 10).length;
+const CartComponent = ({ currentUser }) => {
+  const [cart, setCart] = useState({ items: [], totalAmount: 0, totalItems: 0 });
+  const [loading, setLoading] = useState(true);
+  const [checkoutData, setCheckoutData] = useState({
+    shippingAddress: {
+      street: '',
+      city: '',
+      state: '',
+      zipCode: '',
+      country: ''
+    },
+    notes: ''
+  });
+  const [showCheckout, setShowCheckout] = useState(false);
 
-  const monthlyRevenue = data.orders
-    .filter(order => {
-      const orderDate = new Date(order.date);
-      const now = new Date();
-      return (
-        orderDate.getMonth() === now.getMonth() &&
-        orderDate.getFullYear() === now.getFullYear()
-      );
-    })
-    .reduce((sum, order) => sum + order.total, 0);
+  useEffect(() => {
+    loadCart();
+  }, []);
 
-  const avgOrderValue = totalOrders ? totalRevenue / totalOrders : 0;
-  const bestSellers = [...data.products]
-    .sort((a, b) => b.sold - a.sold)
-    .slice(0, 3);
-
-  const adminView = isAdmin(currentUser);
-
-  // 📑 Report Export
-  const generateDashboardReport = (format) => {
-    if (!isAdmin(currentUser) && !isVendor(currentUser)) {
-      alert('You are not authorized to generate reports.');
-      return;
-    }
-
-    const timestamp = new Date().toISOString().split('T')[0];
-
-    const dashboardMetrics = {
-      'Report Type': 'Executive Dashboard Report (Scoped View)',
-      'Generated Date': timestamp,
-      'Reporting Period': 'All Time',
-      'Total Revenue': adminView ? totalRevenue.toLocaleString() : 'REDACTED',
-      'Total Orders': totalOrders,
-      'Pending Orders': pendingOrders,
-      'Completed Orders': completedOrders,
-      'Total Products': data.products.length,
-      'Low Stock Alerts': lowStockItems,
-      'Total Customers': data.users.filter(u => u.role === 'customer').length,
-      'Active Vendors': data.vendors.length,
-      'Average Order Value': adminView
-        ? (totalRevenue / (totalOrders || 1)).toFixed(2)
-        : 'REDACTED',
-      'Total Stock Value': adminView
-        ? data.products
-            .reduce((sum, p) => sum + p.stock * p.price, 0)
-            .toLocaleString()
-        : 'REDACTED',
-    };
-
-    const bestSellersData = bestSellers.map((product, index) => ({
-      Rank: index + 1,
-      'Product Name': product.name,
-      Category: product.category,
-      'Units Sold': product.sold,
-      'Unit Price': product.price,
-      'Total Revenue': (product.sold * product.price).toLocaleString(),
-      'Current Stock': product.stock,
-      'Stock Status': product.stock < 10 ? 'Low' : 'Good',
-    }));
-
-    if (format === 'csv') {
-      const csv = [
-        '=== EXECUTIVE DASHBOARD REPORT ===',
-        `Generated on: ${timestamp}`,
-        '',
-        '=== KEY BUSINESS METRICS ===',
-        ...Object.entries(dashboardMetrics).map(([key, value]) => `${key},${value}`),
-        '',
-        '=== TOP PERFORMING PRODUCTS ===',
-        bestSellersData.length ? Object.keys(bestSellersData[0]).join(',') : '',
-        ...bestSellersData.map(row => Object.values(row).join(',')),
-      ].join('\n');
-
-      const blob = new Blob([csv], { type: 'text/csv' });
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `dashboard_report_${timestamp}.csv`;
-      a.click();
-      window.URL.revokeObjectURL(url);
-    } else if (format === 'pdf') {
-      const pdfContent = [
-        'EXECUTIVE DASHBOARD REPORT',
-        '========================',
-        `Generated: ${timestamp}`,
-        '',
-        'BUSINESS OVERVIEW',
-        '----------------',
-        ...Object.entries(dashboardMetrics).map(([key, value]) => `${key}: ${value}`),
-        '',
-        'TOP PERFORMING PRODUCTS',
-        '----------------------',
-        ...bestSellers.map(
-          (product, index) =>
-            `${index + 1}. ${product.name} - ${product.sold} units sold ($${(
-              product.sold * product.price
-            ).toLocaleString()} revenue)`
-        ),
-      ].join('\n');
-
-      const blob = new Blob([pdfContent], { type: 'text/plain' });
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `dashboard_report_${timestamp}.txt`;
-      a.click();
-      window.URL.revokeObjectURL(url);
+  const loadCart = async () => {
+    try {
+      const response = await ApiService.getCart();
+      setCart(response.cart);
+    } catch (error) {
+      console.error('Error loading cart:', error);
+    } finally {
+      setLoading(false);
     }
   };
+
+  const updateQuantity = async (productId, newQuantity) => {
+    try {
+      if (newQuantity === 0) {
+        await ApiService.removeFromCart(productId);
+      } else {
+        await ApiService.updateCartItem(productId, newQuantity);
+      }
+      await loadCart();
+    } catch (error) {
+      console.error('Error updating cart:', error);
+      alert('Failed to update cart');
+    }
+  };
+
+  const removeItem = async (productId) => {
+    try {
+      await ApiService.removeFromCart(productId);
+      await loadCart();
+    } catch (error) {
+      console.error('Error removing item:', error);
+      alert('Failed to remove item');
+    }
+  };
+
+  const clearCart = async () => {
+    try {
+      await ApiService.clearCart();
+      await loadCart();
+    } catch (error) {
+      console.error('Error clearing cart:', error);
+      alert('Failed to clear cart');
+    }
+  };
+
+  const handleCheckout = async () => {
+    try {
+      await ApiService.createOrder(checkoutData);
+      alert('Order placed successfully!');
+      await loadCart();
+      setShowCheckout(false);
+      setCheckoutData({
+        shippingAddress: {
+          street: '',
+          city: '',
+          state: '',
+          zipCode: '',
+          country: ''
+        },
+        notes: ''
+      });
+    } catch (error) {
+      console.error('Error creating order:', error);
+      alert('Failed to place order: ' + error.message);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="p-6">
+        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600 mx-auto"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 space-y-6">
       <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-          <p className="text-gray-600">Welcome back!</p>
-        </div>
-        <div className="flex gap-2">
-          {(isAdmin(currentUser) || isVendor(currentUser)) && (
-            <>
-              <button
-                onClick={() => generateDashboardReport('csv')}
-                className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center"
-              >
-                <Download className="w-4 h-4 mr-2" />
-                Export CSV
-              </button>
-              <button
-                onClick={() => generateDashboardReport('pdf')}
-                className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg flex items-center"
-              >
-                <FileText className="w-4 h-4 mr-2" />
-                Export Report
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* KPI Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {/* Admin only KPIs */}
-        {isAdmin(currentUser) && (
-          <>
-            <div className="bg-white rounded-lg shadow-md p-6">
-              <div className="flex items-center">
-                <DollarSign className="w-8 h-8 text-green-600" />
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-gray-600">Total Revenue</p>
-                  <p className="text-2xl font-bold text-gray-900">
-                    ${totalRevenue.toLocaleString()}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-lg shadow-md p-6">
-              <div className="flex items-center">
-                <TrendingUp className="w-8 h-8 text-blue-600" />
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-gray-600">This Month Revenue</p>
-                  <p className="text-2xl font-bold text-gray-900">
-                    ${monthlyRevenue.toLocaleString()}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-lg shadow-md p-6">
-              <div className="flex items-center">
-                <BarChart3 className="w-8 h-8 text-orange-600" />
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-gray-600">Avg Order Value</p>
-                  <p className="text-2xl font-bold text-gray-900">
-                    ${avgOrderValue.toFixed(2)}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-lg shadow-md p-6">
-              <div className="flex items-center">
-                <ShoppingCart className="w-8 h-8 text-purple-600" />
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-gray-600">Completed Orders</p>
-                  <p className="text-2xl font-bold text-gray-900">{completedOrders}</p>
-                </div>
-              </div>
-            </div>
-          </>
+        <h1 className="text-2xl font-bold text-gray-900">Shopping Cart</h1>
+        {cart.items.length > 0 && (
+          <button
+            onClick={clearCart}
+            className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg"
+          >
+            Clear Cart
+          </button>
         )}
-
-        {/* Shared KPIs */}
-        <div className="bg-white rounded-lg shadow-md p-6">
-          <div className="flex items-center">
-            <ShoppingCart className="w-8 h-8 text-green-600" />
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Total Orders</p>
-              <p className="text-2xl font-bold text-gray-900">{totalOrders}</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-lg shadow-md p-6">
-          <div className="flex items-center">
-            <AlertTriangle className="w-8 h-8 text-yellow-600" />
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Pending Orders</p>
-              <p className="text-2xl font-bold text-gray-900">{pendingOrders}</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-lg shadow-md p-6">
-          <div className="flex items-center">
-            <Package className="w-8 h-8 text-red-600" />
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Low Stock Items</p>
-              <p className="text-2xl font-bold text-gray-900">{lowStockItems}</p>
-            </div>
-          </div>
-        </div>
       </div>
 
-      {/* Best Sellers */}
-      <div className="bg-white rounded-lg shadow-md p-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">
-          Best Selling Products
-        </h2>
-        <div className="space-y-3">
-          {bestSellers.map((product, index) => (
-            <div
-              key={product.id}
-              className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
+      {cart.items.length === 0 ? (
+        <div className="text-center py-12">
+          <ShoppingCart className="h-24 w-24 text-gray-400 mx-auto mb-4" />
+          <h3 className="text-xl font-medium text-gray-900 mb-2">Your cart is empty</h3>
+          <p className="text-gray-500">Add some products to get started!</p>
+        </div>
+      ) : (
+        <>
+          {/* Cart Items */}
+          <div className="bg-white rounded-lg shadow-md overflow-hidden">
+            {cart.items.map((item) => (
+              <div key={item.productId._id} className="p-6 border-b border-gray-200 last:border-b-0">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-4">
+                    <div className="w-16 h-16 bg-gray-200 rounded-lg flex items-center justify-center">
+                      <Package className="h-8 w-8 text-gray-400" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-medium text-gray-900">{item.productId.name}</h3>
+                      <p className="text-gray-500">${item.price.toFixed(2)} each</p>
+                      <p className="text-sm text-gray-400">In stock: {item.productId.stock}</p>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center space-x-4">
+                    <div className="flex items-center space-x-2">
+                      <button
+                        onClick={() => updateQuantity(item.productId._id, item.quantity - 1)}
+                        className="w-8 h-8 rounded-full border border-gray-300 flex items-center justify-center hover:bg-gray-100"
+                      >
+                        <Minus className="h-4 w-4" />
+                      </button>
+                      <span className="w-12 text-center">{item.quantity}</span>
+                      <button
+                        onClick={() => updateQuantity(item.productId._id, item.quantity + 1)}
+                        className="w-8 h-8 rounded-full border border-gray-300 flex items-center justify-center hover:bg-gray-100"
+                        disabled={item.quantity >= item.productId.stock}
+                      >
+                        <Plus className="h-4 w-4" />
+                      </button>
+                    </div>
+                    
+                    <div className="text-right">
+                      <p className="text-lg font-medium text-gray-900">
+                        ${(item.price * item.quantity).toFixed(2)}
+                      </p>
+                    </div>
+                    
+                    <button
+                      onClick={() => removeItem(item.productId._id)}
+                      className="text-red-600 hover:text-red-800"
+                    >
+                      <Trash2 className="h-5 w-5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Cart Summary */}
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <div className="flex justify-between items-center mb-4">
+              <span className="text-lg font-medium">Total Items:</span>
+              <span className="text-lg">{cart.totalItems}</span>
+            </div>
+            <div className="flex justify-between items-center mb-6">
+              <span className="text-xl font-bold">Total Amount:</span>
+              <span className="text-xl font-bold text-blue-600">${cart.totalAmount.toFixed(2)}</span>
+            </div>
+            <button
+              onClick={() => setShowCheckout(true)}
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium"
             >
-              <div className="flex items-center">
-                <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
-                  <span className="text-sm font-bold text-blue-600">#{index + 1}</span>
+              Proceed to Checkout
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* Checkout Modal */}
+      {showCheckout && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
+            <h3 className="text-lg font-bold mb-4">Checkout</h3>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Street Address</label>
+                <input
+                  type="text"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  value={checkoutData.shippingAddress.street}
+                  onChange={(e) => setCheckoutData(prev => ({
+                    ...prev,
+                    shippingAddress: { ...prev.shippingAddress, street: e.target.value }
+                  }))}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">City</label>
+                  <input
+                    type="text"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    value={checkoutData.shippingAddress.city}
+                    onChange={(e) => setCheckoutData(prev => ({
+                      ...prev,
+                      shippingAddress: { ...prev.shippingAddress, city: e.target.value }
+                    }))}
+                  />
                 </div>
-                <div className="ml-3">
-                  <p className="font-medium text-gray-900">{product.name}</p>
-                  <p className="text-sm text-gray-500">{product.category}</p>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">State</label>
+                  <input
+                    type="text"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    value={checkoutData.shippingAddress.state}
+                    onChange={(e) => setCheckoutData(prev => ({
+                      ...prev,
+                      shippingAddress: { ...prev.shippingAddress, state: e.target.value }
+                    }))}
+                  />
                 </div>
               </div>
-              <div className="text-right">
-                <p className="font-semibold text-gray-900">{product.sold} sold</p>
-                <p className="text-sm text-gray-500">${product.price}</p>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">ZIP Code</label>
+                  <input
+                    type="text"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    value={checkoutData.shippingAddress.zipCode}
+                    onChange={(e) => setCheckoutData(prev => ({
+                      ...prev,
+                      shippingAddress: { ...prev.shippingAddress, zipCode: e.target.value }
+                    }))}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Country</label>
+                  <input
+                    type="text"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    value={checkoutData.shippingAddress.country}
+                    onChange={(e) => setCheckoutData(prev => ({
+                      ...prev,
+                      shippingAddress: { ...prev.shippingAddress, country: e.target.value }
+                    }))}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Notes (Optional)</label>
+                <textarea
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  rows={3}
+                  value={checkoutData.notes}
+                  onChange={(e) => setCheckoutData(prev => ({ ...prev, notes: e.target.value }))}
+                />
+              </div>
+
+              <div className="bg-gray-50 p-4 rounded-lg">
+                <div className="flex justify-between items-center">
+                  <span className="font-medium">Total: ${cart.totalAmount.toFixed(2)}</span>
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowCheckout(false)}
+                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleCheckout}
+                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                >
+                  Place Order
+                </button>
               </div>
             </div>
-          ))}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };
 
 /* -------------------------
-   User Management Component
-   - Exports restricted to admin & vendor (per requirement: reports only for admin & vendor)
-   - Module already only available to admin in nav; kept safe guard
+   Product Browse Component for Customers
    ------------------------- */
-const UserManagementComponent = ({ data, currentUser }) => {
+const ProductBrowseComponent = ({ currentUser }) => {
+  const [products, setProducts] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedRole, setSelectedRole] = useState('all');
+  const [selectedCategory, setSelectedCategory] = useState('');
+  const [categories, setCategories] = useState([]);
 
-  const filteredUsers = data.users.filter(user => {
-    const matchesSearch = user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         user.email.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesRole = selectedRole === 'all' || user.role === selectedRole;
-    return matchesSearch && matchesRole;
-  });
+  useEffect(() => {
+    loadProducts();
+  }, [searchTerm, selectedCategory]);
 
-  const generateUserReport = (format) => {
-    if (!isAdmin(currentUser) && !isVendor(currentUser)) {
-      alert('You are not authorized to generate user reports.');
-      return;
-    }
-    const timestamp = new Date().toISOString().split('T')[0];
-    const userReportData = data.users.map(user => {
-      const userOrders = data.orders.filter(order => order.customerId === user.id);
-      const totalSpent = userOrders.reduce((sum, order) => sum + order.total, 0);
+  const loadProducts = async () => {
+    try {
+      const params = {};
+      if (searchTerm) params.search = searchTerm;
+      if (selectedCategory) params.category = selectedCategory;
       
-      return {
-        'User ID': user.id,
-        'Full Name': user.name,
-        'Email Address': user.email,
-        'User Role': user.role,
-        'Account Status': user.status,
-        'Total Orders': userOrders.length,
-        'Total Spent ($)': totalSpent.toFixed(2),
-        'Join Date': '2024-01-15',
-        'Last Active': '2024-09-25',
-        'Customer Tier': totalSpent > 1000 ? 'Premium' : totalSpent > 500 ? 'Gold' : 'Standard'
-      };
-    });
-    const userAnalytics = {
-      'Report Type': 'User Management Report',
-      'Generated Date': timestamp,
-      'Total Users': data.users.length,
-      'Admin Users': data.users.filter(u => u.role === 'admin').length,
-      'Vendor Users': data.users.filter(u => u.role === 'vendor').length,
-      'Customer Users': data.users.filter(u => u.role === 'customer').length,
-      'Active Users': data.users.filter(u => u.status === 'active').length,
-      'Premium Customers': userReportData.filter(u => u['Customer Tier'] === 'Premium').length
-    };
-
-    if (format === 'csv') {
-      const csv = [
-        '=== USER MANAGEMENT REPORT ===',
-        `Generated on: ${timestamp}`,
-        '',
-        '=== USER ANALYTICS ===',
-        ...Object.entries(userAnalytics).map(([key, value]) => `${key},${value}`),
-        '',
-        '=== DETAILED USER DATA ===',
-        Object.keys(userReportData[0]).join(','),
-        ...userReportData.map(row => Object.values(row).join(','))
-      ].join('\n');
-
-      const blob = new Blob([csv], { type: 'text/csv' });
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `user_management_report_${timestamp}.csv`;
-      a.click();
-      window.URL.revokeObjectURL(url);
+      const response = await ApiService.getProducts(params);
+      setProducts(response.products);
+      
+      // Extract unique categories
+      const uniqueCategories = [...new Set(response.products.map(p => p.category))];
+      setCategories(uniqueCategories);
+    } catch (error) {
+      console.error('Error loading products:', error);
+    } finally {
+      setLoading(false);
     }
   };
+
+  const addToCart = async (productId) => {
+    try {
+      await ApiService.addToCart(productId, 1);
+      alert('Product added to cart!');
+    } catch (error) {
+      console.error('Error adding to cart:', error);
+      alert('Failed to add to cart: ' + error.message);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="p-6">
+        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600 mx-auto"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 space-y-6">
       <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold text-gray-900">User Management</h1>
-        <div className="flex gap-2">
-          {(isAdmin(currentUser) || isVendor(currentUser)) && (
-            <button 
-              onClick={() => generateUserReport('csv')}
-              className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center"
-            >
-              <Download className="w-4 h-4 mr-2" />
-              Export Report
-            </button>
-          )}
-          {isAdmin(currentUser) && (
-            <button className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center">
-              <Plus className="w-4 h-4 mr-2" />
-              Add User
-            </button>
-          )}
-        </div>
+        <h1 className="text-2xl font-bold text-gray-900">Browse Products</h1>
       </div>
 
-      {/* Filters */}
+      {/* Search and Filter */}
       <div className="bg-white rounded-lg shadow-md p-4">
         <div className="flex flex-wrap gap-4">
           <div className="flex-1 min-w-64">
@@ -695,7 +737,7 @@ const UserManagementComponent = ({ data, currentUser }) => {
               <Search className="w-4 h-4 absolute left-3 top-3 text-gray-400" />
               <input
                 type="text"
-                placeholder="Search users..."
+                placeholder="Search products..."
                 className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
@@ -704,695 +746,79 @@ const UserManagementComponent = ({ data, currentUser }) => {
           </div>
           <select
             className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            value={selectedRole}
-            onChange={(e) => setSelectedRole(e.target.value)}
+            value={selectedCategory}
+            onChange={(e) => setSelectedCategory(e.target.value)}
           >
-            <option value="all">All Roles</option>
-            <option value="admin">Admin</option>
-            <option value="vendor">Vendor</option>
-            <option value="customer">Customer</option>
+            <option value="">All Categories</option>
+            {categories.map(category => (
+              <option key={category} value={category}>{category}</option>
+            ))}
           </select>
         </div>
       </div>
 
-      {/* Users Table */}
-      <div className="bg-white rounded-lg shadow-md overflow-hidden">
-        <table className="w-full">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Role</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {filteredUsers.map(user => (
-              <tr key={user.id} className="hover:bg-gray-50">
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div>
-                    <div className="text-sm font-medium text-gray-900">{user.name}</div>
-                    <div className="text-sm text-gray-500">{user.email}</div>
-                  </div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                    user.role === 'admin' ? 'bg-purple-100 text-purple-800' :
-                    user.role === 'vendor' ? 'bg-blue-100 text-blue-800' :
-                    'bg-green-100 text-green-800'
-                  }`}>
-                    {user.role}
-                  </span>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-800">
-                    {user.status}
-                  </span>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-                  {isAdmin(currentUser) && (
-                    <>
-                      <button className="text-blue-600 hover:text-blue-900">
-                        <Edit className="w-4 h-4" />
-                      </button>
-                      <button className="text-red-600 hover:text-red-900">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-};
-
-/* -------------------------
-   Inventory Management Component
-   - Exports allowed only for admin & vendor
-   - Vendor sees only their products (already scoped)
-   ------------------------- */
-const InventoryManagementComponent = ({ data, currentUser }) => {
-  const lowStockProducts = data.products.filter(product => product.stock < 10);
-  const totalStockValue = data.products.reduce((sum, product) => sum + (product.stock * product.price), 0);
-
-  const generateInventoryReport = (format) => {
-    if (!isAdmin(currentUser) && !isVendor(currentUser)) {
-      alert('You are not authorized to generate inventory reports.');
-      return;
-    }
-
-    const timestamp = new Date().toISOString().split('T')[0];
-    const reportData = data.products.map(product => ({
-      'Product ID': product.id,
-      'Product Name': product.name,
-      'Category': product.category,
-      'Current Stock': product.stock,
-      'Unit Price ($)': product.price,
-      'Stock Value ($)': (product.stock * product.price).toFixed(2),
-      'Units Sold': product.sold,
-      'Revenue Generated ($)': (product.sold * product.price).toFixed(2),
-      'Stock Status': product.stock < 10 ? 'Low Stock' : product.stock < 50 ? 'Medium Stock' : 'High Stock',
-      'Vendor ID': product.vendorId || 'N/A'
-    }));
-
-    const summaryData = {
-      'Report Type': 'Inventory Management Report',
-      'Generated Date': timestamp,
-      'Total Products': data.products.length,
-      'Low Stock Items': lowStockProducts.length,
-      'Total Stock Value': totalStockValue.toLocaleString()
-    };
-
-    if (format === 'csv') {
-      const csv = [
-        '=== INVENTORY MANAGEMENT REPORT ===',
-        `Generated on: ${timestamp}`,
-        '',
-        '=== SUMMARY ===',
-        ...Object.entries(summaryData).map(([key, value]) => `${key},${value}`),
-        '',
-        '=== DETAILED INVENTORY DATA ===',
-        Object.keys(reportData[0]).join(','),
-        ...reportData.map(row => Object.values(row).join(','))
-      ].join('\n');
-
-      const blob = new Blob([csv], { type: 'text/csv' });
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `inventory_report_${timestamp}.csv`;
-      a.click();
-      window.URL.revokeObjectURL(url);
-    } else if (format === 'json') {
-      const jsonData = {
-        reportInfo: summaryData,
-        inventoryData: reportData,
-        lowStockAlerts: lowStockProducts.map(p => ({
-          id: p.id,
-          name: p.name,
-          currentStock: p.stock,
-          alertLevel: 'LOW'
-        }))
-      };
-
-      const blob = new Blob([JSON.stringify(jsonData, null, 2)], { type: 'application/json' });
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `inventory_report_${timestamp}.json`;
-      a.click();
-      window.URL.revokeObjectURL(url);
-    }
-  };
-
-
-   return (
-    <div className="p-6 space-y-6">
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold text-gray-900">
-          {isVendor(currentUser) ? 'My Products' : 'Inventory Management'}
-        </h1>
-        <div className="flex gap-2">
-          {(isAdmin(currentUser) || isVendor(currentUser)) && (
-            <>
-              <button onClick={() => generateInventoryReport('csv')} className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center">
-                <Download className="w-4 h-4 mr-2" />
-                Export CSV
-              </button>
-              <button onClick={() => generateInventoryReport('json')} className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg flex items-center">
-                <Download className="w-4 h-4 mr-2" />
-                Export JSON
-              </button>
-            </>
-          )}
-          {isAdmin(currentUser) && (
-            <button className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center">
-              <Plus className="w-4 h-4 mr-2" />
-              Add Product
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Inventory Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-white rounded-lg shadow-md p-6">
-          <div className="flex items-center">
-            <Package className="w-8 h-8 text-blue-600" />
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Total Products</p>
-              <p className="text-2xl font-bold text-gray-900">{data.products.length}</p>
+      {/* Products Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+        {products.map(product => (
+          <div key={product._id} className="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-lg transition-shadow">
+            <div className="h-48 bg-gray-200 flex items-center justify-center">
+              <Package className="h-16 w-16 text-gray-400" />
             </div>
-          </div>
-        </div>
-        {(isAdmin(currentUser) || isVendor(currentUser)) && (
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <div className="flex items-center">
-              <DollarSign className="w-8 h-8 text-green-600" />
-              <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Stock Value</p>
-                <p className="text-2xl font-bold text-gray-900">${totalStockValue.toLocaleString()}</p>
+            <div className="p-4">
+              <h3 className="font-semibold text-lg text-gray-900 mb-1">{product.name}</h3>
+              <p className="text-sm text-gray-500 mb-2">{product.category}</p>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xl font-bold text-blue-600">${product.price}</span>
+                <span className="text-sm text-gray-500">Stock: {product.stock}</span>
               </div>
+              <button
+                onClick={() => addToCart(product._id)}
+                disabled={product.stock === 0}
+                className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg flex items-center justify-center"
+              >
+                <ShoppingCart className="h-4 w-4 mr-2" />
+                {product.stock === 0 ? 'Out of Stock' : 'Add to Cart'}
+              </button>
             </div>
           </div>
-        )}
-        <div className="bg-white rounded-lg shadow-md p-6">
-          <div className="flex items-center">
-            <AlertTriangle className="w-8 h-8 text-red-600" />
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Low Stock Items</p>
-              <p className="text-2xl font-bold text-gray-900">{lowStockProducts.length}</p>
-            </div>
-          </div>
-        </div>
+        ))}
       </div>
-      {/* Low Stock Alert */}
-      {lowStockProducts.length > 0 && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-          <div className="flex items-center">
-            <AlertTriangle className="w-5 h-5 text-red-600 mr-2" />
-            <h3 className="text-lg font-semibold text-red-800">Low Stock Alert</h3>
-          </div>
-          <p className="text-red-700 mt-1">The following products are running low on stock:</p>
-          <ul className="mt-2 space-y-1">
-            {lowStockProducts.map(product => (
-              <li key={product.id} className="text-red-700">
-                • {product.name} ({product.stock} remaining)
-              </li>
-            ))}
-          </ul>
+
+      {products.length === 0 && (
+        <div className="text-center py-12">
+          <Package className="h-24 w-24 text-gray-400 mx-auto mb-4" />
+          <h3 className="text-xl font-medium text-gray-900 mb-2">No products found</h3>
+          <p className="text-gray-500">Try adjusting your search or filter criteria.</p>
         </div>
       )}
-
-      {/* Products Table */}
-  <div className="bg-white rounded-lg shadow-md overflow-hidden">
-        <table className="w-full">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Stock</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Price</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Sold</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {data.products.map(product => (
-              <tr key={product.id} className="hover:bg-gray-50">
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm font-medium text-gray-900">{product.name}</div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">
-                    {product.category}
-                  </span>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span className={`text-sm font-medium ${product.stock < 10 ? 'text-red-600' : 'text-gray-900'}`}>
-                    {product.stock}
-                  </span>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                  ${(product.price).toLocaleString()}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                  {product.sold}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-                  {(isAdmin(currentUser) || isVendor(currentUser)) && (
-                    <button className="text-blue-600 hover:text-blue-900">
-                      <Edit className="w-4 h-4" />
-                    </button>
-                  )}
-                  <button className="text-green-600 hover:text-green-900">
-                    <Eye className="w-4 h-4" />
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
     </div>
   );
 };
 
-/* -------------------------
-   Sales Component
-   - Reports allowed for admin & vendor only
-   - Customers can see their orders and generate invoices per order
-   - Vendors see their own sales only (scoped)
-   - Admin sees full platform sales and full details
-   ------------------------- */
-const SalesComponent = ({ data, currentUser }) => {
-  const totalRevenue = data.orders.reduce((sum, order) => sum + order.total, 0);
-  const completedOrders = data.orders.filter(order => order.status === 'completed');
-  const avgOrderValue = data.orders.length ? (totalRevenue / data.orders.length) : 0;
-  const monthlyRevenue = data.orders.filter(order => {
-    const orderDate = new Date(order.date);
-    const currentMonth = new Date().getMonth();
-    return orderDate.getMonth() === currentMonth;
-  }).reduce((sum, order) => sum + order.total, 0);
-
-  const generateSalesReport = (format) => {
-    if (!isAdmin(currentUser) && !isVendor(currentUser)) {
-      alert('You are not authorized to generate sales reports.');
-      return;
-    }
-
-    const timestamp = new Date().toISOString().split('T')[0];
-    const reportData = data.orders.map(order => {
-      const product = data.products.find(p => p.id === order.productId);
-      const customer = data.users.find(u => u.id === order.customerId);
-      const vendor = data.vendors.find(v => v.id === order.vendorId);
-      
-      return {
-        'Order ID': order.id,
-        'Order Date': order.date,
-        'Customer Name': customer?.name || 'Unknown',
-        'Customer Email': customer?.email || 'N/A',
-        'Product Name': product?.name || 'Unknown',
-        'Product Category': product?.category || 'N/A',
-        'Vendor Name': vendor?.name || 'Unknown',
-        'Quantity': order.quantity,
-        'Unit Price ($)': product?.price || 0,
-        'Total Amount ($)': order.total,
-        'Order Status': order.status,
-        'Commission Rate (%)': vendor?.commission || 0,
-        'Commission Amount ($)': vendor ? ((order.total * vendor.commission) / 100).toFixed(2) : 0
-      };
-    });
-
-    const analytics = {
-      'Report Type': 'Sales & Revenue Report (Scoped)',
-      'Generated Date': timestamp,
-      'Total Orders': data.orders.length,
-      'Completed Orders': completedOrders.length,
-      'Pending Orders': data.orders.filter(o => o.status === 'pending').length,
-      'Cancelled Orders': data.orders.filter(o => o.status === 'cancelled').length,
-      'Total Revenue': isAdmin(currentUser) ? totalRevenue.toLocaleString() : 'REDACTED',
-      'Monthly Revenue': isAdmin(currentUser) ? monthlyRevenue.toLocaleString() : 'REDACTED',
-      'Average Order Value': isAdmin(currentUser) ? avgOrderValue.toFixed(2) : 'REDACTED'
-    };
-
-    if (format === 'csv') {
-      const csv = [
-        '=== SALES & REVENUE REPORT ===',
-        `Generated on: ${timestamp}`,
-        '',
-        '=== SALES ANALYTICS ===',
-        ...Object.entries(analytics).map(([key, value]) => `${key},${value}`),
-        '',
-        '=== DETAILED SALES DATA ===',
-        Object.keys(reportData[0]).join(','),
-        ...reportData.map(row => Object.values(row).join(','))
-      ].join('\n');
-
-      const blob = new Blob([csv], { type: 'text/csv' });
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `sales_report_${timestamp}.csv`;
-      a.click();
-      window.URL.revokeObjectURL(url);
-
-    } else if (format === 'excel') {
-      const excelData = [
-        '=== SALES DASHBOARD EXPORT ===',
-        `Report Generated: ${timestamp}`,
-        '',
-        '=== KEY METRICS ===',
-        'Metric,Value',
-        ...Object.entries(analytics).map(([key, value]) => `${key},${value}`),
-        '',
-        '=== COMPLETE ORDER DETAILS ===',
-        Object.keys(reportData[0]).join(','),
-        ...reportData.map(row => Object.values(row).join(','))
-      ].join('\n');
-
-      const blob = new Blob([excelData], { type: 'application/vnd.ms-excel' });
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `sales_report_${timestamp}.xls`;
-      a.click();
-      window.URL.revokeObjectURL(url);
-    }
-  };
-
-  const generateInvoiceForOrder = (order) => {
-    // Only the customer who owns the order (or admin) should generate a customer invoice
-    if (!isCustomer(currentUser) && !isAdmin(currentUser)) {
-      alert('Only customers and admins can generate invoices from this view.');
-      return;
-    }
-    // If customer, ensure they own the order
-    if (isCustomer(currentUser) && order.customerId !== currentUser.id) {
-      alert('You can only generate invoices for your own orders.');
-      return;
-    }
-
-    const product = data.products.find(p => p.id === order.productId);
-    const timestamp = new Date().toISOString().split('T')[0];
-    const invoiceContent = [
-      `INVOICE`,
-      `Invoice Date: ${timestamp}`,
-      `Invoice No: INV-${order.id}`,
-      '',
-      `Customer ID: ${order.customerId}`,
-      `Product: ${product?.name || 'Unknown'}`,
-      `Quantity: ${order.quantity}`,
-      `Unit Price: ${product?.price || 0}`,
-      `Total: $${order.total}`,
-      '',
-      `Status: ${order.status}`,
-      '',
-      `Thank you for your purchase!`
-    ].join('\n');
-
-    const blob = new Blob([invoiceContent], { type: 'text/plain' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `invoice_order_${order.id}.txt`;
-    a.click();
-    window.URL.revokeObjectURL(url);
-  };
-
- return (
-    <div className="p-6 space-y-6">
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold text-gray-900">
-          {isCustomer(currentUser) ? 'My Orders' : 'Sales & Revenue'}
-        </h1>
-        <div className="flex gap-2">
-          {(isAdmin(currentUser) || isVendor(currentUser)) && (
-            <>
-              <button onClick={() => generateSalesReport('csv')} className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center">
-                <Download className="w-4 h-4 mr-2" />
-                Export CSV
-              </button>
-              <button onClick={() => generateSalesReport('excel')} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center">
-                <Download className="w-4 h-4 mr-2" />
-                Export Excel
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-      {/* Revenue Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {isAdmin(currentUser) && (
-          <>
-            <div className="bg-white rounded-lg shadow-md p-6">
-              <div className="flex items-center">
-                <DollarSign className="w-8 h-8 text-green-600" />
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-gray-600">Total Revenue</p>
-                  <p className="text-2xl font-bold text-gray-900">${totalRevenue.toLocaleString()}</p>
-                </div>
-              </div>
-            </div>
-            <div className="bg-white rounded-lg shadow-md p-6">
-              <div className="flex items-center">
-                <TrendingUp className="w-8 h-8 text-blue-600" />
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-gray-600">This Month</p>
-                  <p className="text-2xl font-bold text-gray-900">${monthlyRevenue.toLocaleString()}</p>
-                </div>
-              </div>
-            </div>
-          </>
-        )}
-
-        <div className="bg-white rounded-lg shadow-md p-6">
-          <div className="flex items-center">
-            <ShoppingCart className="w-8 h-8 text-purple-600" />
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Completed Orders</p>
-              <p className="text-2xl font-bold text-gray-900">{completedOrders.length}</p>
-            </div>
-          </div>
-        </div>
-
-        {isAdmin(currentUser) && (
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <div className="flex items-center">
-              <BarChart3 className="w-8 h-8 text-orange-600" />
-              <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Avg Order Value</p>
-                <p className="text-2xl font-bold text-gray-900">${avgOrderValue.toFixed(2)}</p>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Orders Table */}
-      <div className="bg-white rounded-lg shadow-md overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-200">
-          <h2 className="text-lg font-semibold text-gray-900">Recent Orders</h2>
-        </div>
-        <table className="w-full">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Order ID</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Quantity</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
-              {isCustomer(currentUser) && (
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Invoice</th>
-              )}
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {data.orders.map(order => {
-              const product = data.products.find(p => p.id === order.productId);
-              return (
-                <tr key={order.id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">#{order.id}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{product?.name || 'Unknown'}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{order.quantity}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                    {/* Admin and Vendor see actual totals; customers see their own */}
-                    ${order.total}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                      order.status === 'completed' ? 'bg-green-100 text-green-800' :
-                      order.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
-                      'bg-red-100 text-red-800'
-                    }`}>
-                      {order.status}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{order.date}</td>
-                  {isCustomer(currentUser) && (
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      <button
-                        onClick={() => generateInvoiceForOrder(order)}
-                        className="bg-blue-600 text-white px-3 py-1 rounded-lg"
-                      >
-                        Generate Invoice
-                      </button>
-                    </td>
-                  )}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-};
-/* -------------------------
-   Settings Component (unchanged)
-   ------------------------- */
-const SettingsComponent = () => {
-  const [settings, setSettings] = useState({
-    siteName: 'E-commerce ERP',
-    currency: 'USD',
-    taxRate: '8.5',
-    lowStockAlert: '10',
-    emailNotifications: true,
-    smsNotifications: false,
-    autoBackup: true
-  });
-
-  const handleSettingChange = (key, value) => {
-    setSettings(prev => ({ ...prev, [key]: value }));
-  };
-
-  return (
-    <div className="p-6 space-y-6">
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold text-gray-900">System Settings</h1>
-        <button className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg">
-          Save Changes
-        </button>
-      </div>
-
-      {/* General Settings */}
-      <div className="bg-white rounded-lg shadow-md p-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">General Settings</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Site Name</label>
-            <input
-              type="text"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              value={settings.siteName}
-              onChange={(e) => handleSettingChange('siteName', e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Currency</label>
-            <select
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              value={settings.currency}
-              onChange={(e) => handleSettingChange('currency', e.target.value)}
-            >
-              <option value="USD">USD</option>
-              <option value="EUR">EUR</option>
-              <option value="GBP">GBP</option>
-              <option value="INR">INR</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Tax Rate (%)</label>
-            <input
-              type="number"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              value={settings.taxRate}
-              onChange={(e) => handleSettingChange('taxRate', e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Low Stock Alert Threshold</label>
-            <input
-              type="number"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              value={settings.lowStockAlert}
-              onChange={(e) => handleSettingChange('lowStockAlert', e.target.value)}
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Notification Settings */}
-      <div className="bg-white rounded-lg shadow-md p-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Notification Settings</h2>
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-900">Email Notifications</p>
-              <p className="text-sm text-gray-500">Receive order and system notifications via email</p>
-            </div>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                className="sr-only peer"
-                checked={settings.emailNotifications}
-                onChange={(e) => handleSettingChange('emailNotifications', e.target.checked)}
-              />
-              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-            </label>
-          </div>
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-900">SMS Notifications</p>
-              <p className="text-sm text-gray-500">Receive critical alerts via SMS</p>
-            </div>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                className="sr-only peer"
-                checked={settings.smsNotifications}
-                onChange={(e) => handleSettingChange('smsNotifications', e.target.checked)}
-              />
-              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-            </label>
-          </div>
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-900">Auto Backup</p>
-              <p className="text-sm text-gray-500">Automatically backup system data daily</p>
-            </div>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                className="sr-only peer"
-                checked={settings.autoBackup}
-                onChange={(e) => handleSettingChange('autoBackup', e.target.checked)}
-              />
-              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-            </label>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-/* -------------------------
-   Main ERP Component
-   - Uses scoped data per user so components only receive allowed records
-   - Modules list unchanged but content is scoped and UI controls are guarded
-   ------------------------- */
+// Export the updated ERP component with integrated cart functionality
 const EcommerceERP = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
   const [activeModule, setActiveModule] = useState('dashboard');
-  const [data] = useState(initialData);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  useEffect(() => {
+    // Check if user is already authenticated
+    const token = localStorage.getItem('token');
+    if (token) {
+      ApiService.setToken(token);
+      // Verify token and get user info
+      ApiService.getMe()
+        .then(response => {
+          setCurrentUser(response.user);
+          setIsAuthenticated(true);
+        })
+        .catch(() => {
+          // Token is invalid, remove it
+          ApiService.removeToken();
+        });
+    }
+  }, []);
 
   const handleLogin = (user) => {
     setCurrentUser(user);
@@ -1401,6 +827,7 @@ const EcommerceERP = () => {
   };
 
   const handleLogout = () => {
+    ApiService.removeToken();
     setCurrentUser(null);
     setIsAuthenticated(false);
     setActiveModule('dashboard');
@@ -1427,7 +854,9 @@ const EcommerceERP = () => {
 
   const customerModules = [
     { id: 'dashboard', name: 'Dashboard', icon: Home },
-    { id: 'sales', name: 'My Orders', icon: ShoppingCart }
+    { id: 'products', name: 'Browse Products', icon: Package },
+    { id: 'cart', name: 'Shopping Cart', icon: ShoppingCart },
+    { id: 'orders', name: 'My Orders', icon: FileText }
   ];
 
   const getModulesForRole = (role) => {
@@ -1445,145 +874,141 @@ const EcommerceERP = () => {
 
   const modules = getModulesForRole(currentUser?.role);
 
-  // Scope data per current user (so components receive only permitted records)
-  const scopedData = getScopedData(currentUser, data);
-
   const renderContent = () => {
     switch (activeModule) {
       case 'dashboard':
-        return <DashboardComponent data={scopedData} currentUser={currentUser} />;
-      case 'users':
-        // Only admin should be able to access user management (nav only shows for admin, but safe guard anyway)
-        if (!isAdmin(currentUser)) {
-          return (
-            <div className="p-6">
-              <h2 className="text-xl font-semibold">Access Denied</h2>
-              <p className="text-gray-600 mt-2">You are not authorized to view User Management.</p>
-            </div>
-          );
+        return <div className="p-6"><h2 className="text-2xl font-bold">Dashboard</h2><p>Welcome to your dashboard!</p></div>;
+      case 'products':
+        if (currentUser?.role === 'customer') {
+          return <ProductBrowseComponent currentUser={currentUser} />;
         }
-        return <UserManagementComponent data={scopedData} currentUser={currentUser} />;
+        return <div className="p-6"><h2 className="text-xl font-semibold">Access Denied</h2></div>;
+      case 'cart':
+        if (currentUser?.role === 'customer') {
+          return <CartComponent currentUser={currentUser} />;
+        }
+        return <div className="p-6"><h2 className="text-xl font-semibold">Access Denied</h2></div>;
+      case 'orders':
+        return <div className="p-6"><h2 className="text-2xl font-bold">Orders</h2><p>Your orders will appear here.</p></div>;
       case 'inventory':
-        return <InventoryManagementComponent data={scopedData} currentUser={currentUser} />;
+        return <div className="p-6"><h2 className="text-2xl font-bold">Inventory</h2><p>Inventory management coming soon.</p></div>;
       case 'sales':
-        return <SalesComponent data={scopedData} currentUser={currentUser} />;
-      case 'settings':
-        // Only admin sees settings in nav as well, but safe guard anyway
-        if (!isAdmin(currentUser)) {
-          return (
-            <div className="p-6">
-              <h2 className="text-xl font-semibold">Access Denied</h2>
-              <p className="text-gray-600 mt-2">You are not authorized to view Settings.</p>
-            </div>
-          );
+        return <div className="p-6"><h2 className="text-2xl font-bold">Sales</h2><p>Sales data coming soon.</p></div>;
+      case 'users':
+        if (currentUser?.role === 'admin') {
+          return <div className="p-6"><h2 className="text-2xl font-bold">User Management</h2><p>User management coming soon.</p></div>;
         }
-        return <SettingsComponent />;
+        return <div className="p-6"><h2 className="text-xl font-semibold">Access Denied</h2></div>;
+      case 'settings':
+        if (currentUser?.role === 'admin') {
+          return <div className="p-6"><h2 className="text-2xl font-bold">Settings</h2><p>Settings coming soon.</p></div>;
+        }
+        return <div className="p-6"><h2 className="text-xl font-semibold">Access Denied</h2></div>;
       default:
-        return <DashboardComponent data={scopedData} currentUser={currentUser} />;
+        return <div className="p-6"><h2 className="text-2xl font-bold">Dashboard</h2><p>Welcome to your dashboard!</p></div>;
     }
   };
 
   return (
-  <div className="flex h-screen bg-gray-100 overflow-hidden">
-    {/* Sidebar */}
-    <div className={`${sidebarOpen ? 'w-64' : 'w-16'} bg-white shadow-lg transition-all duration-300 flex flex-col flex-shrink-0`}>
-      {/* Logo/Header */}
-      <div className="flex items-center justify-between p-4 border-b border-gray-200">
-        {sidebarOpen && (
-          <h1 className="text-xl font-bold text-gray-800">E-commerce ERP</h1>
-        )}
-        <button
-          onClick={() => setSidebarOpen(!sidebarOpen)}
-          className="p-2 rounded-lg hover:bg-gray-100"
-        >
-          {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-        </button>
-      </div>
-
-      {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto p-4">
-        <ul className="space-y-2">
-          {modules.map(module => {
-            const IconComponent = module.icon;
-            return (
-              <li key={module.id}>
-                <button
-                  onClick={() => setActiveModule(module.id)}
-                  className={`w-full flex items-center px-3 py-2 rounded-lg text-left transition-colors ${
-                    activeModule === module.id
-                      ? 'bg-blue-100 text-blue-700 border-r-2 border-blue-700'
-                      : 'text-gray-700 hover:bg-gray-100'
-                  }`}
-                >
-                  <IconComponent className="w-5 h-5 mr-3 flex-shrink-0" />
-                  {sidebarOpen && <span className="text-sm font-medium">{module.name}</span>}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      </nav>
-
-      {/* User Profile */}
-      <div className="border-t border-gray-200 p-4">
-        <div className="flex items-center">
-          <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
-            <span className="text-sm font-bold text-blue-600">
-              {currentUser?.name?.split(' ').map(n => n[0]).join('') || 'U'}
-            </span>
-          </div>
+    <div className="flex h-screen bg-gray-100 overflow-hidden">
+      {/* Sidebar */}
+      <div className={`${sidebarOpen ? 'w-64' : 'w-16'} bg-white shadow-lg transition-all duration-300 flex flex-col flex-shrink-0`}>
+        {/* Logo/Header */}
+        <div className="flex items-center justify-between p-4 border-b border-gray-200">
           {sidebarOpen && (
-            <div className="ml-3 flex-1">
-              <p className="text-sm font-medium text-gray-700">{currentUser?.name}</p>
-              <p className="text-xs text-gray-500 capitalize">{currentUser?.role}</p>
+            <h1 className="text-xl font-bold text-gray-800">E-commerce ERP</h1>
+          )}
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className="p-2 rounded-lg hover:bg-gray-100"
+          >
+            {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+          </button>
+        </div>
+
+        {/* Navigation */}
+        <nav className="flex-1 overflow-y-auto p-4">
+          <ul className="space-y-2">
+            {modules.map(module => {
+              const IconComponent = module.icon;
+              return (
+                <li key={module.id}>
+                  <button
+                    onClick={() => setActiveModule(module.id)}
+                    className={`w-full flex items-center px-3 py-2 rounded-lg text-left transition-colors ${
+                      activeModule === module.id
+                        ? 'bg-blue-100 text-blue-700 border-r-2 border-blue-700'
+                        : 'text-gray-700 hover:bg-gray-100'
+                    }`}
+                  >
+                    <IconComponent className="w-5 h-5 mr-3 flex-shrink-0" />
+                    {sidebarOpen && <span className="text-sm font-medium">{module.name}</span>}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </nav>
+
+        {/* User Profile */}
+        <div className="border-t border-gray-200 p-4">
+          <div className="flex items-center">
+            <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
+              <span className="text-sm font-bold text-blue-600">
+                {currentUser?.name?.split(' ').map(n => n[0]).join('') || 'U'}
+              </span>
             </div>
-          )}
-          {sidebarOpen && (
-            <button 
-              onClick={handleLogout}
-              className="p-1 text-gray-400 hover:text-gray-600"
-              title="Logout"
-            >
-              <LogOut className="w-4 h-4" />
-            </button>
-          )}
+            {sidebarOpen && (
+              <div className="ml-3 flex-1">
+                <p className="text-sm font-medium text-gray-700">{currentUser?.name}</p>
+                <p className="text-xs text-gray-500 capitalize">{currentUser?.role}</p>
+              </div>
+            )}
+            {sidebarOpen && (
+              <button 
+                onClick={handleLogout}
+                className="p-1 text-gray-400 hover:text-gray-600"
+                title="Logout"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            )}
+          </div>
         </div>
       </div>
-    </div>
 
-    {/* Main Content */}
-    <div className="flex-1 flex flex-col overflow-hidden">
-      {/* Top Navigation */}
-      <header className="bg-white shadow-sm border-b border-gray-200 flex-shrink-0">
-        <div className="flex items-center justify-between px-6 py-4">
-          <div className="flex items-center space-x-4">
-            <h2 className="text-lg font-semibold text-gray-800 capitalize">
-              {activeModule.replace('-', ' ')}
-            </h2>
-          </div>
-          <div className="flex items-center space-x-4">
-            {/* Notifications */}
-            <button className="relative p-2 text-gray-400 hover:text-gray-600">
-              <Bell className="w-5 h-5" />
-              <span className="absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full"></span>
-            </button>
-            
-            {/* User Role Display */}
-            <div className="px-3 py-1 text-sm border border-gray-300 rounded-lg bg-gray-50">
-              <span className="capitalize">{currentUser?.role} View</span>
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Top Navigation */}
+        <header className="bg-white shadow-sm border-b border-gray-200 flex-shrink-0">
+          <div className="flex items-center justify-between px-6 py-4">
+            <div className="flex items-center space-x-4">
+              <h2 className="text-lg font-semibold text-gray-800 capitalize">
+                {activeModule.replace('-', ' ')}
+              </h2>
+            </div>
+            <div className="flex items-center space-x-4">
+              {/* Notifications */}
+              <button className="relative p-2 text-gray-400 hover:text-gray-600">
+                <Bell className="w-5 h-5" />
+                <span className="absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full"></span>
+              </button>
+              
+              {/* User Role Display */}
+              <div className="px-3 py-1 text-sm border border-gray-300 rounded-lg bg-gray-50">
+                <span className="capitalize">{currentUser?.role} View</span>
+              </div>
             </div>
           </div>
-        </div>
-      </header>
+        </header>
 
-      {/* Main Content Area - Scrollable */}
-      <main className="flex-1 overflow-y-auto bg-gray-100">
-        {renderContent()}
-      </main>
+        {/* Main Content Area - Scrollable */}
+        <main className="flex-1 overflow-y-auto bg-gray-100">
+          {renderContent()}
+        </main>
+      </div>
     </div>
-  </div>
-);
-
+  );
 };
 
 export default EcommerceERP;
